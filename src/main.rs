@@ -3,7 +3,10 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use sutra_core::{parse_inventory, parse_playbook, yaml_to_toml, toml_to_yaml};
+use sutra_core::{
+    parse_inventory, parse_playbook, target_matches, toml_to_yaml, yaml_to_toml, Executor,
+    NodeInfo, RunRecord, SutraModule,
+};
 use sutra_modules::ModuleRegistry;
 
 #[derive(Parser)]
@@ -19,7 +22,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Show execution plan (dry-run)
+    /// Apply playbook (dry-run by default, --confirm to execute)
     Apply {
         /// Path to TOML playbook
         playbook: PathBuf,
@@ -94,6 +97,44 @@ enum Commands {
     },
 }
 
+/// Resolve the list of target nodes for a playbook run.
+fn resolve_nodes(
+    pb: &sutra_core::Playbook,
+    inventory: &Option<PathBuf>,
+    limit: &Option<String>,
+) -> anyhow::Result<Vec<NodeInfo>> {
+    let mut nodes = if let Some(inv_path) = inventory {
+        let inv = parse_inventory(inv_path)?;
+        inv.node
+    } else {
+        vec![NodeInfo::localhost()]
+    };
+
+    // Filter by playbook targets.
+    nodes.retain(|n| target_matches(n, &pb.target));
+
+    // Apply --limit filter.
+    if let Some(limit_id) = limit {
+        nodes.retain(|n| n.id == *limit_id);
+    }
+
+    if nodes.is_empty() {
+        anyhow::bail!("no nodes match the playbook targets");
+    }
+
+    Ok(nodes)
+}
+
+/// Default audit log directory.
+fn audit_log_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("SUTRA_AUDIT_DIR") {
+        PathBuf::from(dir)
+    } else {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        PathBuf::from(home).join(".local/share/sutra/audit")
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -114,62 +155,173 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let pb = parse_playbook(&playbook)?;
             let registry = ModuleRegistry::new();
+            let nodes = resolve_nodes(&pb, &inventory, &limit)?;
 
             println!("Playbook: {}", pb.playbook.name);
             if !pb.playbook.description.is_empty() {
                 println!("  {}", pb.playbook.description);
             }
+            println!("Nodes: {}", nodes.iter().map(|n| n.id.as_str()).collect::<Vec<_>>().join(", "));
             println!();
 
-            for task in &pb.task {
-                if let Some(module) = registry.get(&task.module) {
-                    let node = sutra_core::NodeInfo {
-                        id: "local".to_string(),
-                        host: "localhost".to_string(),
-                        role: String::new(),
-                        arch: std::env::consts::ARCH.to_string(),
-                        tags: vec![],
-                        transport: "local".to_string(),
-                        ssh_user: None,
+            for node in &nodes {
+                let exec = Executor::for_node(node);
+                let mut record = RunRecord::new(
+                    playbook.to_string_lossy().as_ref(),
+                    &node.id,
+                );
+
+                if nodes.len() > 1 {
+                    println!("--- {} ({}) ---", node.id, node.host);
+                }
+
+                for task in &pb.task {
+                    let Some(module) = registry.get(&task.module) else {
+                        eprintln!("  [ERROR]  Unknown module: {}", task.module);
+                        continue;
                     };
 
-                    let plan = module.plan(task, &node).await?;
+                    // Idempotency check — skip if desired state already met.
+                    let already_met = module.check(task, node, &exec).await.unwrap_or(false);
+                    if already_met {
+                        println!("  [OK]     {} {} — already in desired state", task.module, task.action);
+                        record.results.push(sutra_core::TaskResult {
+                            module: task.module.clone(),
+                            action: task.action.clone(),
+                            success: true,
+                            changed: false,
+                            message: "already in desired state".to_string(),
+                        });
+                        continue;
+                    }
+
+                    let plan = module.plan(task, node, &exec).await?;
 
                     if plan.changed {
                         println!("  [CHANGE] {}", plan.description);
                     } else {
                         println!("  [OK]     {}", plan.description);
                     }
-                } else {
-                    println!("  [ERROR]  Unknown module: {}", task.module);
+
+                    if let Some(ref diff) = plan.diff {
+                        for line in diff.lines() {
+                            println!("           {}", line);
+                        }
+                    }
+
+                    if confirm && plan.changed {
+                        let result = module.apply(task, node, &exec).await?;
+                        if result.success {
+                            println!("  [DONE]   {}", result.message);
+                        } else {
+                            eprintln!("  [FAIL]   {}", result.message);
+                            record.results.push(result);
+                            record.finish();
+                            record.write_to_log(&audit_log_dir()).ok();
+                            anyhow::bail!(
+                                "task {} {} failed on {}, aborting",
+                                task.module,
+                                task.action,
+                                node.id
+                            );
+                        }
+                        record.results.push(result);
+                    }
+                }
+
+                record.finish();
+                if confirm {
+                    record.write_to_log(&audit_log_dir()).ok();
                 }
             }
 
             if confirm {
-                println!("\nApplying changes...");
-                // TODO: Execute tasks
-                println!("Done.");
+                println!("\nDone. Audit log: {}", audit_log_dir().display());
             } else {
                 println!("\nDry-run complete. Use --confirm to apply.");
             }
         }
 
-        Commands::Check { playbook, .. } => {
+        Commands::Check { playbook, inventory } => {
             let pb = parse_playbook(&playbook)?;
-            println!("Checking state for: {}", pb.playbook.name);
-            // TODO: Run check on all tasks
-            println!("Check complete.");
-        }
+            let registry = ModuleRegistry::new();
+            let nodes = resolve_nodes(&pb, &inventory, &None)?;
 
-        Commands::Plan { playbook, .. } => {
-            let pb = parse_playbook(&playbook)?;
-            println!("Execution plan for: {}", pb.playbook.name);
-            for (i, task) in pb.task.iter().enumerate() {
-                println!("  {}. {} → {}", i + 1, task.module, task.action);
+            println!("Checking state for: {}", pb.playbook.name);
+            let mut all_ok = true;
+
+            for node in &nodes {
+                let exec = Executor::for_node(node);
+
+                if nodes.len() > 1 {
+                    println!("--- {} ---", node.id);
+                }
+
+                for task in &pb.task {
+                    let Some(module) = registry.get(&task.module) else {
+                        eprintln!("  [ERROR]  Unknown module: {}", task.module);
+                        all_ok = false;
+                        continue;
+                    };
+
+                    match module.check(task, node, &exec).await {
+                        Ok(true) => {
+                            println!("  [OK]     {} {}", task.module, task.action);
+                        }
+                        Ok(false) => {
+                            println!("  [DRIFT]  {} {} — desired state not met", task.module, task.action);
+                            all_ok = false;
+                        }
+                        Err(e) => {
+                            eprintln!("  [ERROR]  {} {} — {}", task.module, task.action, e);
+                            all_ok = false;
+                        }
+                    }
+                }
+            }
+
+            if all_ok {
+                println!("\nAll checks passed.");
+            } else {
+                println!("\nSome checks failed. Run `sutra apply` to remediate.");
+                std::process::exit(1);
             }
         }
 
-        Commands::Translate { input, output } => {
+        Commands::Plan { playbook, inventory } => {
+            let pb = parse_playbook(&playbook)?;
+            let registry = ModuleRegistry::new();
+            let nodes = resolve_nodes(&pb, &inventory, &None)?;
+
+            println!("Execution plan for: {}", pb.playbook.name);
+            println!("Target nodes: {}\n", nodes.iter().map(|n| n.id.as_str()).collect::<Vec<_>>().join(", "));
+
+            for node in &nodes {
+                let exec = Executor::for_node(node);
+
+                if nodes.len() > 1 {
+                    println!("--- {} ---", node.id);
+                }
+
+                for (i, task) in pb.task.iter().enumerate() {
+                    let Some(module) = registry.get(&task.module) else {
+                        eprintln!("  {}. [ERROR] Unknown module: {}", i + 1, task.module);
+                        continue;
+                    };
+
+                    let plan = module.plan(task, node, &exec).await?;
+                    let tag = if plan.changed { "CHANGE" } else { "OK" };
+                    println!("  {}. [{}] {}", i + 1, tag, plan.description);
+                    if let Some(ref diff) = plan.diff {
+                        for line in diff.lines() {
+                            println!("           {}", line);
+                        }
+                    }
+                }
+            }
+        }
+
+        Commands::Translate { input, output: _ } => {
             let content = std::fs::read_to_string(&input)?;
             let sections = sutra_ai::markdown::extract_sections(&content);
             let prompt = sections.to_prompt();
@@ -210,11 +362,7 @@ async fn main() -> anyhow::Result<()> {
                 for node in &inv.node {
                     println!(
                         "  {} ({}) — {} {} [{}]",
-                        node.id,
-                        node.host,
-                        node.role,
-                        node.arch,
-                        node.transport
+                        node.id, node.host, node.role, node.arch, node.transport
                     );
                 }
             }
@@ -253,6 +401,16 @@ async fn main() -> anyhow::Result<()> {
                         if registry.get(&task.module).is_none() {
                             eprintln!("  ERROR: Unknown module '{}'", task.module);
                             errors += 1;
+                        }
+
+                        if let Some(module) = registry.get(&task.module) {
+                            if !module.actions().contains(&task.action.as_str()) {
+                                eprintln!(
+                                    "  ERROR: Unknown action '{}' for module '{}'",
+                                    task.action, task.module
+                                );
+                                errors += 1;
+                            }
                         }
                     }
 

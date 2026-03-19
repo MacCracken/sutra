@@ -1,10 +1,14 @@
 //! sutra-transport — Transport layer for executing tasks on local/remote nodes.
+//!
+//! For MVP, the Executor in sutra-core handles local execution directly.
+//! This crate provides the Transport trait for v1 SSH/daimon transports.
 
 use sutra_core::NodeInfo;
 
 pub mod local;
 
 /// Transport trait — how sutra reaches a node to execute tasks.
+/// Used by SSH and daimon transports (v1). Local execution uses sutra_core::Executor.
 #[allow(async_fn_in_trait)]
 pub trait Transport: Send + Sync {
     /// Execute a shell command on the target node.
@@ -40,9 +44,8 @@ impl ExecResult {
 }
 
 /// Select the appropriate transport for a node.
-/// Returns LocalTransport for now — SSH and daimon transports will use enum dispatch.
+/// Returns LocalTransport for now — SSH and daimon transports will be added in v1.
 pub fn transport_for(_node: &NodeInfo) -> local::LocalTransport {
-    // TODO: enum dispatch for ssh/daimon transports
     local::LocalTransport
 }
 

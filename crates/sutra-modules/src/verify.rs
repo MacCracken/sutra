@@ -1,6 +1,6 @@
 //! verify module — Post-task assertions (port listening, file exists, service running, HTTP OK).
 
-use sutra_core::{NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
+use sutra_core::{param_int, param_str, Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
 
 pub struct VerifyModule;
 
@@ -13,38 +13,27 @@ impl SutraModule for VerifyModule {
         &["port_listening", "file_exists", "service_running", "http_ok"]
     }
 
-    async fn plan(&self, task: &Task, _node: &NodeInfo) -> anyhow::Result<TaskPlan> {
+    async fn plan(
+        &self,
+        task: &Task,
+        _node: &NodeInfo,
+        _exec: &Executor,
+    ) -> anyhow::Result<TaskPlan> {
         let desc = match task.action.as_str() {
             "port_listening" => {
-                let port = task
-                    .params
-                    .get("port")
-                    .and_then(|v| v.as_integer())
-                    .unwrap_or(0);
+                let port = param_int(task, "port", 0);
                 format!("verify port {} is listening", port)
             }
             "file_exists" => {
-                let path = task
-                    .params
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
+                let path = param_str(task, "path", "unknown");
                 format!("verify file {} exists", path)
             }
             "service_running" => {
-                let service = task
-                    .params
-                    .get("service")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
+                let service = param_str(task, "service", "unknown");
                 format!("verify service {} is running", service)
             }
             "http_ok" => {
-                let url = task
-                    .params
-                    .get("url")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
+                let url = param_str(task, "url", "unknown");
                 format!("verify HTTP 200 from {}", url)
             }
             other => format!("verify {}", other),
@@ -59,22 +48,88 @@ impl SutraModule for VerifyModule {
         })
     }
 
-    async fn apply(&self, task: &Task, node: &NodeInfo) -> anyhow::Result<TaskResult> {
-        let plan = self.plan(task, node).await?;
+    async fn apply(
+        &self,
+        task: &Task,
+        _node: &NodeInfo,
+        exec: &Executor,
+    ) -> anyhow::Result<TaskResult> {
+        let (success, message) = match task.action.as_str() {
+            "port_listening" => {
+                let port = param_int(task, "port", 0);
+                let result = exec
+                    .exec(&format!(
+                        "ss -tlnp 2>/dev/null | grep -q ':{} ' || netstat -tlnp 2>/dev/null | grep -q ':{} '",
+                        port, port
+                    ))
+                    .await?;
+                if result.success() {
+                    (true, format!("port {} is listening", port))
+                } else {
+                    (false, format!("port {} is NOT listening", port))
+                }
+            }
+            "file_exists" => {
+                let path = param_str(task, "path", "");
+                let exists = exec.file_exists(path).await?;
+                if exists {
+                    (true, format!("{} exists", path))
+                } else {
+                    (false, format!("{} does NOT exist", path))
+                }
+            }
+            "service_running" => {
+                let service = param_str(task, "service", "");
+                let result = exec
+                    .exec(&format!("argonaut status {} 2>/dev/null", service))
+                    .await?;
+                let running = result.success() && result.stdout.contains("running");
+                if running {
+                    (true, format!("{} is running", service))
+                } else {
+                    (false, format!("{} is NOT running", service))
+                }
+            }
+            "http_ok" => {
+                let url = param_str(task, "url", "");
+                let timeout = param_int(task, "timeout", 5);
+                let result = exec
+                    .exec(&format!(
+                        "curl -sf -o /dev/null -w '%{{http_code}}' --max-time {} {}",
+                        timeout, url
+                    ))
+                    .await?;
+                let code = result.stdout.trim();
+                if result.success() && code == "200" {
+                    (true, format!("HTTP 200 from {}", url))
+                } else {
+                    (
+                        false,
+                        format!("HTTP check failed for {} (got {})", url, code),
+                    )
+                }
+            }
+            other => (false, format!("unknown verify action: {}", other)),
+        };
 
-        // TODO: Execute verification checks
         Ok(TaskResult {
             module: self.name().to_string(),
             action: task.action.clone(),
-            success: true,
+            success,
             changed: false,
-            message: plan.description,
+            message,
         })
     }
 
-    async fn check(&self, _task: &Task, _node: &NodeInfo) -> anyhow::Result<bool> {
-        // Verify modules are always "check" operations
-        Ok(false)
+    async fn check(
+        &self,
+        task: &Task,
+        node: &NodeInfo,
+        exec: &Executor,
+    ) -> anyhow::Result<bool> {
+        // For verify, check == apply (they're both assertions).
+        let result = self.apply(task, node, exec).await?;
+        Ok(result.success)
     }
 }
 
@@ -84,20 +139,54 @@ mod tests {
     use std::collections::HashMap;
 
     fn test_node() -> NodeInfo {
-        NodeInfo {
-            id: "test".to_string(),
-            host: "localhost".to_string(),
-            role: "".to_string(),
-            arch: "x86_64".to_string(),
-            tags: vec![],
-            transport: "local".to_string(),
-            ssh_user: None,
-        }
+        NodeInfo::localhost()
+    }
+
+    #[tokio::test]
+    async fn test_verify_file_exists() {
+        let module = VerifyModule;
+        let exec = Executor::local();
+        let mut params = HashMap::new();
+        params.insert(
+            "path".to_string(),
+            toml::Value::String("/tmp".to_string()),
+        );
+
+        let task = Task {
+            module: "verify".to_string(),
+            action: "file_exists".to_string(),
+            params,
+        };
+
+        let result = module.apply(&task, &test_node(), &exec).await.unwrap();
+        assert!(result.success);
+        assert!(result.message.contains("exists"));
+    }
+
+    #[tokio::test]
+    async fn test_verify_file_not_exists() {
+        let module = VerifyModule;
+        let exec = Executor::local();
+        let mut params = HashMap::new();
+        params.insert(
+            "path".to_string(),
+            toml::Value::String("/nonexistent-sutra-test-path".to_string()),
+        );
+
+        let task = Task {
+            module: "verify".to_string(),
+            action: "file_exists".to_string(),
+            params,
+        };
+
+        let result = module.apply(&task, &test_node(), &exec).await.unwrap();
+        assert!(!result.success);
     }
 
     #[tokio::test]
     async fn test_verify_port() {
         let module = VerifyModule;
+        let exec = Executor::local();
         let mut params = HashMap::new();
         params.insert("port".to_string(), toml::Value::Integer(8070));
 
@@ -107,28 +196,9 @@ mod tests {
             params,
         };
 
-        let plan = module.plan(&task, &test_node()).await.unwrap();
+        let plan = module.plan(&task, &test_node(), &exec).await.unwrap();
         assert!(!plan.changed);
         assert!(plan.description.contains("8070"));
-    }
-
-    #[tokio::test]
-    async fn test_verify_file() {
-        let module = VerifyModule;
-        let mut params = HashMap::new();
-        params.insert(
-            "path".to_string(),
-            toml::Value::String("/etc/agnos/version".to_string()),
-        );
-
-        let task = Task {
-            module: "verify".to_string(),
-            action: "file_exists".to_string(),
-            params,
-        };
-
-        let plan = module.plan(&task, &test_node()).await.unwrap();
-        assert!(plan.description.contains("/etc/agnos/version"));
     }
 
     #[test]

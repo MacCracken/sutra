@@ -1,6 +1,27 @@
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+members = ["crates/*", "."]
+
+[package]
+name = "sutra"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description.workspace = true
+
+[[bin]]
+name = "sutra"
+path = "src/main.rs"
+
+[dependencies]
+sutra-core = { path = "crates/sutra-core" }
+sutra-modules = { path = "crates/sutra-modules" }
+sutra-ai = { path = "crates/sutra-ai" }
+clap = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [workspace.package]
 version = "2026.3.18"

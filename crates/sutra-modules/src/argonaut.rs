@@ -1,8 +1,30 @@
 //! argonaut module — Service state management via AGNOS argonaut init system.
 
-use sutra_core::{NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
+use sutra_core::{param_str, Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
 
 pub struct ArgonautModule;
+
+impl ArgonautModule {
+    fn service<'a>(&self, task: &'a Task) -> &'a str {
+        param_str(task, "service", "unknown")
+    }
+
+    /// Query whether a service is enabled (starts on boot).
+    async fn is_enabled(&self, exec: &Executor, service: &str) -> anyhow::Result<bool> {
+        let result = exec
+            .exec(&format!("argonaut status {} 2>/dev/null", service))
+            .await?;
+        Ok(result.success() && result.stdout.contains("enabled"))
+    }
+
+    /// Query whether a service is currently running.
+    async fn is_running(&self, exec: &Executor, service: &str) -> anyhow::Result<bool> {
+        let result = exec
+            .exec(&format!("argonaut status {} 2>/dev/null", service))
+            .await?;
+        Ok(result.success() && result.stdout.contains("running"))
+    }
+}
 
 impl SutraModule for ArgonautModule {
     fn name(&self) -> &str {
@@ -13,44 +35,124 @@ impl SutraModule for ArgonautModule {
         &["enable", "disable", "start", "stop", "restart", "status"]
     }
 
-    async fn plan(&self, task: &Task, _node: &NodeInfo) -> anyhow::Result<TaskPlan> {
-        let service = task
-            .params
-            .get("service")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
+    async fn plan(
+        &self,
+        task: &Task,
+        _node: &NodeInfo,
+        exec: &Executor,
+    ) -> anyhow::Result<TaskPlan> {
+        let service = self.service(task);
+
+        let (changed, description) = match task.action.as_str() {
+            "enable" => {
+                let enabled = self.is_enabled(exec, service).await?;
+                if enabled {
+                    (false, format!("{} already enabled", service))
+                } else {
+                    (true, format!("enable {}", service))
+                }
+            }
+            "disable" => {
+                let enabled = self.is_enabled(exec, service).await?;
+                if enabled {
+                    (true, format!("disable {}", service))
+                } else {
+                    (false, format!("{} already disabled", service))
+                }
+            }
+            "start" => {
+                let running = self.is_running(exec, service).await?;
+                if running {
+                    (false, format!("{} already running", service))
+                } else {
+                    (true, format!("start {}", service))
+                }
+            }
+            "stop" => {
+                let running = self.is_running(exec, service).await?;
+                if running {
+                    (true, format!("stop {}", service))
+                } else {
+                    (false, format!("{} already stopped", service))
+                }
+            }
+            "restart" => (true, format!("restart {}", service)),
+            "status" => (false, format!("query status of {}", service)),
+            other => anyhow::bail!("unknown argonaut action: {}", other),
+        };
 
         Ok(TaskPlan {
             module: self.name().to_string(),
             action: task.action.clone(),
-            changed: true,
-            description: format!("argonaut {} {}", task.action, service),
+            changed,
+            description,
             diff: None,
         })
     }
 
-    async fn apply(&self, task: &Task, node: &NodeInfo) -> anyhow::Result<TaskResult> {
-        let plan = self.plan(task, node).await?;
+    async fn apply(
+        &self,
+        task: &Task,
+        _node: &NodeInfo,
+        exec: &Executor,
+    ) -> anyhow::Result<TaskResult> {
+        let service = self.service(task);
 
-        // TODO: Execute argonaut command via transport
+        let cmd = match task.action.as_str() {
+            "enable" => format!("argonaut enable {}", service),
+            "disable" => format!("argonaut disable {}", service),
+            "start" => format!("argonaut start {}", service),
+            "stop" => format!("argonaut stop {}", service),
+            "restart" => format!("argonaut restart {}", service),
+            "status" => format!("argonaut status {}", service),
+            other => anyhow::bail!("unknown argonaut action: {}", other),
+        };
+
+        let result = exec.exec(&cmd).await?;
+
+        if task.action == "status" {
+            return Ok(TaskResult {
+                module: self.name().to_string(),
+                action: task.action.clone(),
+                success: result.success(),
+                changed: false,
+                message: result.stdout,
+            });
+        }
+
         Ok(TaskResult {
             module: self.name().to_string(),
             action: task.action.clone(),
-            success: true,
-            changed: plan.changed,
-            message: plan.description,
+            success: result.success(),
+            changed: result.success(),
+            message: if result.success() {
+                format!("argonaut {} {} — ok", task.action, service)
+            } else {
+                format!(
+                    "argonaut {} {} — failed: {}",
+                    task.action,
+                    service,
+                    result.stderr.trim()
+                )
+            },
         })
     }
 
-    async fn check(&self, task: &Task, _node: &NodeInfo) -> anyhow::Result<bool> {
-        let _service = task
-            .params
-            .get("service")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
+    async fn check(
+        &self,
+        task: &Task,
+        _node: &NodeInfo,
+        exec: &Executor,
+    ) -> anyhow::Result<bool> {
+        let service = self.service(task);
 
-        // TODO: Query argonaut for service state
-        Ok(false)
+        match task.action.as_str() {
+            "enable" => self.is_enabled(exec, service).await,
+            "disable" => self.is_enabled(exec, service).await.map(|v| !v),
+            "start" => self.is_running(exec, service).await,
+            "stop" => self.is_running(exec, service).await.map(|v| !v),
+            _ => Ok(false),
+        }
     }
 }
 
@@ -60,22 +162,18 @@ mod tests {
     use std::collections::HashMap;
 
     fn test_node() -> NodeInfo {
-        NodeInfo {
-            id: "test".to_string(),
-            host: "localhost".to_string(),
-            role: "edge".to_string(),
-            arch: "x86_64".to_string(),
-            tags: vec![],
-            transport: "local".to_string(),
-            ssh_user: None,
-        }
+        NodeInfo::localhost()
     }
 
     #[tokio::test]
     async fn test_argonaut_plan_enable() {
         let module = ArgonautModule;
+        let exec = Executor::local();
         let mut params = HashMap::new();
-        params.insert("service".to_string(), toml::Value::String("tarang".to_string()));
+        params.insert(
+            "service".to_string(),
+            toml::Value::String("tarang".to_string()),
+        );
 
         let task = Task {
             module: "argonaut".to_string(),
@@ -83,7 +181,7 @@ mod tests {
             params,
         };
 
-        let plan = module.plan(&task, &test_node()).await.unwrap();
+        let plan = module.plan(&task, &test_node(), &exec).await.unwrap();
         assert!(plan.description.contains("tarang"));
     }
 

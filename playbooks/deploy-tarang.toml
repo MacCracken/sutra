@@ -26,6 +26,6 @@ port = 8070
 timeout_secs = 10
 
 [[task]]
-module = "daimon"
-action = "report"
-status = "tarang deployed"
+module = "verify"
+action = "service_running"
+service = "tarang"
