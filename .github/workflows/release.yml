@@ -11,8 +11,13 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  ci:
+    name: CI Gate
+    uses: ./.github/workflows/ci.yml
+
   build:
     name: Build ${{ matrix.arch }}
+    needs: [ci]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -34,19 +39,23 @@ jobs:
       with:
         key: release-${{ matrix.arch }}
 
-    - name: Install cross-compilation tools
+    - name: Install cross-compilation tools (arm64)
       if: matrix.arch == 'arm64'
       run: |
         sudo apt-get update
         sudo apt-get install -y gcc-aarch64-linux-gnu
-        mkdir -p .cargo
-        cat > .cargo/config.toml << 'EOF'
-        [target.aarch64-unknown-linux-gnu]
-        linker = "aarch64-linux-gnu-gcc"
-        EOF
+        echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
+        echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
 
     - name: Build
       run: cargo build --release --locked --target ${{ matrix.target }}
+
+    - name: Smoke test
+      if: matrix.arch == 'amd64'
+      run: |
+        ./target/${{ matrix.target }}/release/sutra --version
+        ./target/${{ matrix.target }}/release/sutra modules
+        ./target/${{ matrix.target }}/release/sutra validate playbooks/deploy-tarang.toml
 
     - name: Package
       run: |
@@ -67,7 +76,7 @@ jobs:
 
   release:
     name: Create Release
-    needs: build
+    needs: [ci, build]
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
