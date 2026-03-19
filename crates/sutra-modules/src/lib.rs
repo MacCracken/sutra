@@ -2,8 +2,8 @@
 
 use sutra_core::{Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
 
-pub mod ark;
 pub mod argonaut;
+pub mod ark;
 pub mod file;
 pub mod shell;
 pub mod user;
@@ -74,12 +74,7 @@ impl SutraModule for Module {
         }
     }
 
-    async fn check(
-        &self,
-        task: &Task,
-        node: &NodeInfo,
-        exec: &Executor,
-    ) -> anyhow::Result<bool> {
+    async fn check(&self, task: &Task, node: &NodeInfo, exec: &Executor) -> anyhow::Result<bool> {
         match self {
             Module::Ark(m) => m.check(task, node, exec).await,
             Module::Argonaut(m) => m.check(task, node, exec).await,

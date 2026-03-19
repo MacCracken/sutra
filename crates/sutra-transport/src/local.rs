@@ -79,10 +79,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_file_exists() {
         let transport = LocalTransport;
-        let exists = transport
-            .file_exists(&local_node(), "/tmp")
-            .await
-            .unwrap();
+        let exists = transport.file_exists(&local_node(), "/tmp").await.unwrap();
         assert!(exists);
 
         let missing = transport

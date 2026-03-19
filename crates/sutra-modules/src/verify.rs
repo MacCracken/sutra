@@ -1,6 +1,8 @@
 //! verify module — Post-task assertions (port listening, file exists, service running, HTTP OK).
 
-use sutra_core::{esc, param_int, param_str, Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
+use sutra_core::{
+    Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult, esc, param_int, param_str,
+};
 
 pub struct VerifyModule;
 
@@ -10,7 +12,12 @@ impl SutraModule for VerifyModule {
     }
 
     fn actions(&self) -> &[&str] {
-        &["port_listening", "file_exists", "service_running", "http_ok"]
+        &[
+            "port_listening",
+            "file_exists",
+            "service_running",
+            "http_ok",
+        ]
     }
 
     async fn plan(
@@ -96,7 +103,8 @@ impl SutraModule for VerifyModule {
                 let result = exec
                     .exec(&format!(
                         "curl -sf -o /dev/null -w '%{{http_code}}' --max-time {} {}",
-                        timeout, esc(url)
+                        timeout,
+                        esc(url)
                     ))
                     .await?;
                 let code = result.stdout.trim();
@@ -121,12 +129,7 @@ impl SutraModule for VerifyModule {
         })
     }
 
-    async fn check(
-        &self,
-        task: &Task,
-        node: &NodeInfo,
-        exec: &Executor,
-    ) -> anyhow::Result<bool> {
+    async fn check(&self, task: &Task, node: &NodeInfo, exec: &Executor) -> anyhow::Result<bool> {
         // For verify, check == apply (they're both assertions).
         let result = self.apply(task, node, exec).await?;
         Ok(result.success)
@@ -147,10 +150,7 @@ mod tests {
         let module = VerifyModule;
         let exec = Executor::local();
         let mut params = HashMap::new();
-        params.insert(
-            "path".to_string(),
-            toml::Value::String("/tmp".to_string()),
-        );
+        params.insert("path".to_string(), toml::Value::String("/tmp".to_string()));
 
         let task = Task::new("verify", "file_exists", params);
 

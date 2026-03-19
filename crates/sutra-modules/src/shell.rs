@@ -1,6 +1,6 @@
 //! shell module — Escape hatch for arbitrary shell commands.
 
-use sutra_core::{param_str, Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
+use sutra_core::{Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult, param_str};
 
 pub struct ShellModule;
 
@@ -92,17 +92,16 @@ impl SutraModule for ShellModule {
                     stdout.to_string()
                 }
             } else {
-                format!("failed (exit {}): {}", result.exit_code, result.stderr.trim())
+                format!(
+                    "failed (exit {}): {}",
+                    result.exit_code,
+                    result.stderr.trim()
+                )
             },
         })
     }
 
-    async fn check(
-        &self,
-        task: &Task,
-        _node: &NodeInfo,
-        exec: &Executor,
-    ) -> anyhow::Result<bool> {
+    async fn check(&self, task: &Task, _node: &NodeInfo, exec: &Executor) -> anyhow::Result<bool> {
         // Shell commands use `creates` / `removes` for idempotency.
         let creates = param_str(task, "creates", "");
         let removes = param_str(task, "removes", "");
@@ -156,10 +155,7 @@ mod tests {
             "cmd".to_string(),
             toml::Value::String(format!("touch {}", path)),
         );
-        params.insert(
-            "creates".to_string(),
-            toml::Value::String(path.clone()),
-        );
+        params.insert("creates".to_string(), toml::Value::String(path.clone()));
 
         let task = Task::new("shell", "run", params);
 

@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use sutra_core::{
+    Executor, NodeInfo, OnError, OutputEvent, RunRecord, SutraModule, TaskResult, VarContext,
     gather_facts, order_tasks, parse_inventory, parse_playbook, resolve_on_error, target_matches,
-    toml_to_yaml, yaml_to_toml, Executor, NodeInfo, OnError, OutputEvent, RunRecord, SutraModule,
-    TaskResult, VarContext,
+    toml_to_yaml, yaml_to_toml,
 };
 use sutra_modules::ModuleRegistry;
 
@@ -264,10 +264,7 @@ async fn execute_on_node(
         };
 
         // Idempotency check.
-        let already_met = module
-            .check(&expanded, &node, &exec)
-            .await
-            .unwrap_or(false);
+        let already_met = module.check(&expanded, &node, &exec).await.unwrap_or(false);
 
         if out.is_json() {
             out.emit(&OutputEvent::TaskCheck {
@@ -375,9 +372,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
-    let out = Arc::new(Output {
-        format: cli.output,
-    });
+    let out = Arc::new(Output { format: cli.output });
 
     match cli.command {
         Commands::Apply {
@@ -439,10 +434,18 @@ async fn main() -> anyhow::Result<()> {
                     handles.push(tokio::spawn(async move {
                         let _permit = sem.acquire().await.unwrap();
                         execute_on_node(NodeRunParams {
-                            node, tasks, task_order: t_order, registry: reg,
-                            confirm, var_ctx: ctx, gather_node_facts: facts,
-                            playbook_on_error: pb_err, playbook_path: pb_path, out: o,
-                        }).await
+                            node,
+                            tasks,
+                            task_order: t_order,
+                            registry: reg,
+                            confirm,
+                            var_ctx: ctx,
+                            gather_node_facts: facts,
+                            playbook_on_error: pb_err,
+                            playbook_path: pb_path,
+                            out: o,
+                        })
+                        .await
                     }));
                 }
 
@@ -609,10 +612,7 @@ async fn main() -> anyhow::Result<()> {
                             all_ok = false;
                         }
                         Err(e) => {
-                            eprintln!(
-                                "  [ERROR]  {} {} — {}",
-                                expanded.module, expanded.action, e
-                            );
+                            eprintln!("  [ERROR]  {} {} — {}", expanded.module, expanded.action, e);
                             all_ok = false;
                         }
                     }
@@ -778,13 +778,14 @@ async fn main() -> anyhow::Result<()> {
                     }
 
                     if let Some(module) = registry.get(&task.module)
-                        && !module.actions().contains(&task.action.as_str()) {
-                            eprintln!(
-                                "  ERROR: Unknown action '{}' for module '{}'",
-                                task.action, task.module
-                            );
-                            errors += 1;
-                        }
+                        && !module.actions().contains(&task.action.as_str())
+                    {
+                        eprintln!(
+                            "  ERROR: Unknown action '{}' for module '{}'",
+                            task.action, task.module
+                        );
+                        errors += 1;
+                    }
                 }
 
                 if errors == 0 {

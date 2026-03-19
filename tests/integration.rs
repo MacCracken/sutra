@@ -2,9 +2,7 @@
 
 use std::io::Write;
 
-use sutra_core::{
-    parse_playbook, target_matches, Executor, NodeInfo, RunRecord, SutraModule,
-};
+use sutra_core::{Executor, NodeInfo, RunRecord, SutraModule, parse_playbook, target_matches};
 use sutra_modules::ModuleRegistry;
 use tempfile::NamedTempFile;
 
@@ -21,10 +19,7 @@ fn playbook_from_str(toml: &str) -> (tempfile::NamedTempFile, sutra_core::Playbo
 }
 
 /// Run a playbook through the full plan→check→apply→check cycle.
-async fn run_playbook(
-    pb: &sutra_core::Playbook,
-    node: &NodeInfo,
-) -> Vec<sutra_core::TaskResult> {
+async fn run_playbook(pb: &sutra_core::Playbook, node: &NodeInfo) -> Vec<sutra_core::TaskResult> {
     let registry = ModuleRegistry::new();
     let exec = Executor::for_node(node);
     let mut results = Vec::new();
@@ -186,7 +181,10 @@ creates = "{path}"
 
     // Second run — file exists, should skip
     let results = run_playbook(&pb, &node).await;
-    assert!(!results[0].changed, "shell with creates should be idempotent");
+    assert!(
+        !results[0].changed,
+        "shell with creates should be idempotent"
+    );
 
     let _ = tokio::fs::remove_file(&path).await;
 }
@@ -276,7 +274,7 @@ path = "{file2}"
 
 #[test]
 fn test_target_filtering_complex() {
-    let nodes = vec![
+    let nodes = [
         NodeInfo {
             id: "edge-1".into(),
             host: "10.0.0.1".into(),
@@ -320,7 +318,10 @@ fn test_target_filtering_complex() {
         tag: None,
         all: None,
     }];
-    let matched: Vec<_> = nodes.iter().filter(|n| target_matches(n, &targets)).collect();
+    let matched: Vec<_> = nodes
+        .iter()
+        .filter(|n| target_matches(n, &targets))
+        .collect();
     assert_eq!(matched.len(), 1);
     assert_eq!(matched[0].id, "edge-1");
 
@@ -332,7 +333,10 @@ fn test_target_filtering_complex() {
         tag: Some("iot".into()),
         all: None,
     }];
-    let matched: Vec<_> = nodes.iter().filter(|n| target_matches(n, &targets)).collect();
+    let matched: Vec<_> = nodes
+        .iter()
+        .filter(|n| target_matches(n, &targets))
+        .collect();
     assert_eq!(matched.len(), 2);
 
     // Target: all
@@ -343,7 +347,10 @@ fn test_target_filtering_complex() {
         tag: None,
         all: Some(true),
     }];
-    let matched: Vec<_> = nodes.iter().filter(|n| target_matches(n, &targets)).collect();
+    let matched: Vec<_> = nodes
+        .iter()
+        .filter(|n| target_matches(n, &targets))
+        .collect();
     assert_eq!(matched.len(), 3);
 
     // Target: specific node
@@ -354,7 +361,10 @@ fn test_target_filtering_complex() {
         tag: None,
         all: None,
     }];
-    let matched: Vec<_> = nodes.iter().filter(|n| target_matches(n, &targets)).collect();
+    let matched: Vec<_> = nodes
+        .iter()
+        .filter(|n| target_matches(n, &targets))
+        .collect();
     assert_eq!(matched.len(), 1);
     assert_eq!(matched[0].id, "server-1");
 }

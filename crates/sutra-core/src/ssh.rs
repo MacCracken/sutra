@@ -54,22 +54,17 @@ pub async fn connect(
             continue;
         }
         match russh_keys::load_secret_key(path, None) {
-            Ok(key) => {
-                match handle
-                    .authenticate_publickey(user, Arc::new(key))
-                    .await
-                {
-                    Ok(true) => {
-                        authenticated = true;
-                        break;
-                    }
-                    Ok(false) => continue,
-                    Err(e) => {
-                        tracing::debug!("key auth failed with {}: {}", path.display(), e);
-                        continue;
-                    }
+            Ok(key) => match handle.authenticate_publickey(user, Arc::new(key)).await {
+                Ok(true) => {
+                    authenticated = true;
+                    break;
                 }
-            }
+                Ok(false) => continue,
+                Err(e) => {
+                    tracing::debug!("key auth failed with {}: {}", path.display(), e);
+                    continue;
+                }
+            },
             Err(e) => {
                 tracing::debug!("failed to load key {}: {}", path.display(), e);
                 continue;

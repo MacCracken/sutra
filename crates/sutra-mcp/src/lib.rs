@@ -8,8 +8,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sutra_core::{
-    order_tasks, parse_playbook, resolve_on_error, yaml_to_toml, Executor, NodeInfo, OnError,
-    SutraModule, VarContext,
+    Executor, NodeInfo, OnError, SutraModule, VarContext, order_tasks, parse_playbook,
+    resolve_on_error, yaml_to_toml,
 };
 use sutra_modules::ModuleRegistry;
 
@@ -331,8 +331,7 @@ async fn handle_inventory(params: &Value) -> McpResult {
     })];
 
     if from_daimon {
-        let client =
-            sutra_ai::daimon::DaimonClient::new(sutra_ai::daimon::DaimonConfig::default());
+        let client = sutra_ai::daimon::DaimonClient::new(sutra_ai::daimon::DaimonConfig::default());
         if let Ok(fleet) = client.fetch_fleet_nodes().await {
             for n in fleet {
                 nodes.push(serde_json::json!({

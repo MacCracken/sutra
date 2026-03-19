@@ -1,6 +1,8 @@
 //! user module — User and group management.
 
-use sutra_core::{esc, param_bool, param_str, Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
+use sutra_core::{
+    Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult, esc, param_bool, param_str,
+};
 
 pub struct UserModule;
 
@@ -26,12 +28,7 @@ impl SutraModule for UserModule {
     }
 
     fn actions(&self) -> &[&str] {
-        &[
-            "present",
-            "absent",
-            "group_present",
-            "group_absent",
-        ]
+        &["present", "absent", "group_present", "group_absent"]
     }
 
     async fn plan(
@@ -140,7 +137,11 @@ impl SutraModule for UserModule {
                     message: if result.success() {
                         format!("created user {}", username)
                     } else {
-                        format!("failed to create user {}: {}", username, result.stderr.trim())
+                        format!(
+                            "failed to create user {}: {}",
+                            username,
+                            result.stderr.trim()
+                        )
                     },
                 })
             }
@@ -176,7 +177,11 @@ impl SutraModule for UserModule {
                     message: if result.success() {
                         format!("removed user {}", username)
                     } else {
-                        format!("failed to remove user {}: {}", username, result.stderr.trim())
+                        format!(
+                            "failed to remove user {}: {}",
+                            username,
+                            result.stderr.trim()
+                        )
                     },
                 })
             }
@@ -249,12 +254,7 @@ impl SutraModule for UserModule {
         }
     }
 
-    async fn check(
-        &self,
-        task: &Task,
-        _node: &NodeInfo,
-        exec: &Executor,
-    ) -> anyhow::Result<bool> {
+    async fn check(&self, task: &Task, _node: &NodeInfo, exec: &Executor) -> anyhow::Result<bool> {
         match task.action.as_str() {
             "present" => {
                 let username = param_str(task, "username", "");
@@ -326,10 +326,7 @@ mod tests {
         let module = UserModule;
         let exec = Executor::local();
         let mut params = HashMap::new();
-        params.insert(
-            "group".to_string(),
-            toml::Value::String("root".to_string()),
-        );
+        params.insert("group".to_string(), toml::Value::String("root".to_string()));
 
         let task = Task::new("user", "group_present", params);
 

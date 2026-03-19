@@ -1,6 +1,6 @@
 //! argonaut module — Service state management via AGNOS argonaut init system.
 
-use sutra_core::{esc, param_str, Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
+use sutra_core::{Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult, esc, param_str};
 
 pub struct ArgonautModule;
 
@@ -139,12 +139,7 @@ impl SutraModule for ArgonautModule {
         })
     }
 
-    async fn check(
-        &self,
-        task: &Task,
-        _node: &NodeInfo,
-        exec: &Executor,
-    ) -> anyhow::Result<bool> {
+    async fn check(&self, task: &Task, _node: &NodeInfo, exec: &Executor) -> anyhow::Result<bool> {
         let service = self.service(task);
 
         match task.action.as_str() {

@@ -1,7 +1,7 @@
 //! Markdown playbook parser — extracts structured intent from Markdown,
 //! sends to hoosh for TOML generation.
 
-use comrak::{parse_document, Arena, Options};
+use comrak::{Arena, Options, parse_document};
 
 /// Extract structured sections from a Markdown playbook.
 /// Returns (name, targets, tasks) as raw strings for hoosh translation.

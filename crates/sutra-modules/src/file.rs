@@ -1,6 +1,8 @@
 //! file module — File state management (copy, absent, permissions, line_in_file, template).
 
-use sutra_core::{esc, param_int, param_str, Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
+use sutra_core::{
+    Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult, esc, param_int, param_str,
+};
 use tera::Tera;
 
 pub struct FileModule;
@@ -98,11 +100,7 @@ impl SutraModule for FileModule {
                 if exists {
                     let current = exec.read_file_string(path).await.unwrap_or_default();
                     if current.lines().any(|l| l == line) {
-                        (
-                            false,
-                            format!("line already present in {}", path),
-                            None,
-                        )
+                        (false, format!("line already present in {}", path), None)
                     } else {
                         (true, format!("add line to {}", path), None)
                     }
@@ -281,12 +279,7 @@ impl SutraModule for FileModule {
         }
     }
 
-    async fn check(
-        &self,
-        task: &Task,
-        _node: &NodeInfo,
-        exec: &Executor,
-    ) -> anyhow::Result<bool> {
+    async fn check(&self, task: &Task, _node: &NodeInfo, exec: &Executor) -> anyhow::Result<bool> {
         let path = self.path(task);
 
         match task.action.as_str() {
@@ -395,10 +388,7 @@ mod tests {
 
         let mut params = HashMap::new();
         params.insert("path".to_string(), toml::Value::String(path.clone()));
-        params.insert(
-            "line".to_string(),
-            toml::Value::String("line3".to_string()),
-        );
+        params.insert("line".to_string(), toml::Value::String("line3".to_string()));
 
         let task = Task::new("file", "line_in_file", params);
 

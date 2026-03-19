@@ -1,6 +1,6 @@
 //! ark module — Package state management via AGNOS ark package manager.
 
-use sutra_core::{esc, param_str, Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
+use sutra_core::{Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult, esc, param_str};
 
 pub struct ArkModule;
 
@@ -61,10 +61,9 @@ impl SutraModule for ArkModule {
             "install" => {
                 let installed = self.query_installed(exec, package).await?;
                 match installed {
-                    Some(v) if version == "latest" || v == version => (
-                        false,
-                        format!("{} {} already installed", package, v),
-                    ),
+                    Some(v) if version == "latest" || v == version => {
+                        (false, format!("{} {} already installed", package, v))
+                    }
                     Some(v) => (
                         true,
                         format!("upgrade {} from {} to {}", package, v, version),
@@ -146,12 +145,7 @@ impl SutraModule for ArkModule {
         })
     }
 
-    async fn check(
-        &self,
-        task: &Task,
-        _node: &NodeInfo,
-        exec: &Executor,
-    ) -> anyhow::Result<bool> {
+    async fn check(&self, task: &Task, _node: &NodeInfo, exec: &Executor) -> anyhow::Result<bool> {
         let package = self.package(task);
         let version = self.version(task);
 

@@ -140,7 +140,9 @@ impl Executor {
         match &self.kind {
             ExecutorKind::Local => Ok(tokio::fs::try_exists(path).await.unwrap_or(false)),
             ExecutorKind::Ssh { .. } => {
-                let result = self.exec(&format!("test -e {} && echo yes || echo no", esc(path))).await?;
+                let result = self
+                    .exec(&format!("test -e {} && echo yes || echo no", esc(path)))
+                    .await?;
                 Ok(result.stdout.trim() == "yes")
             }
         }
@@ -192,7 +194,11 @@ impl Executor {
                 } else {
                     format!(
                         "mkdir -p {} && printf '%s' '{}' | base64 -d > {} && chmod {:o} {}",
-                        esc(&parent), encoded, epath, mode, epath
+                        esc(&parent),
+                        encoded,
+                        epath,
+                        mode,
+                        epath
                     )
                 };
                 let result = self.exec(&cmd).await?;
@@ -440,19 +446,20 @@ pub async fn gather_facts(exec: &Executor) -> HashMap<String, String> {
 
     // Distro detection from /etc/os-release.
     if let Ok(r) = exec.exec("cat /etc/os-release 2>/dev/null").await
-        && r.success() {
-            for line in r.stdout.lines() {
-                if let Some(id) = line.strip_prefix("ID=") {
-                    facts.insert("distro".into(), id.trim_matches('"').into());
-                }
-                if let Some(ver) = line.strip_prefix("VERSION_ID=") {
-                    facts.insert("distro_version".into(), ver.trim_matches('"').into());
-                }
-                if let Some(name) = line.strip_prefix("PRETTY_NAME=") {
-                    facts.insert("distro_name".into(), name.trim_matches('"').into());
-                }
+        && r.success()
+    {
+        for line in r.stdout.lines() {
+            if let Some(id) = line.strip_prefix("ID=") {
+                facts.insert("distro".into(), id.trim_matches('"').into());
+            }
+            if let Some(ver) = line.strip_prefix("VERSION_ID=") {
+                facts.insert("distro_version".into(), ver.trim_matches('"').into());
+            }
+            if let Some(name) = line.strip_prefix("PRETTY_NAME=") {
+                facts.insert("distro_name".into(), name.trim_matches('"').into());
             }
         }
+    }
 
     // Package manager detection (for v2 cross-distro support).
     for (cmd, name) in [
@@ -463,10 +470,11 @@ pub async fn gather_facts(exec: &Executor) -> HashMap<String, String> {
         ("apk --version", "apk"),
     ] {
         if let Ok(r) = exec.exec(&format!("{} 2>/dev/null", cmd)).await
-            && r.success() {
-                facts.insert("pkg_manager".into(), name.into());
-                break;
-            }
+            && r.success()
+        {
+            facts.insert("pkg_manager".into(), name.into());
+            break;
+        }
     }
 
     // Init system detection.
@@ -476,10 +484,11 @@ pub async fn gather_facts(exec: &Executor) -> HashMap<String, String> {
         ("rc-status --version", "openrc"),
     ] {
         if let Ok(r) = exec.exec(&format!("{} 2>/dev/null", cmd)).await
-            && r.success() {
-                facts.insert("init_system".into(), name.into());
-                break;
-            }
+            && r.success()
+        {
+            facts.insert("init_system".into(), name.into());
+            break;
+        }
     }
 
     facts
@@ -518,12 +527,8 @@ pub trait SutraModule: Send + Sync {
     fn actions(&self) -> &[&str];
 
     /// Plan: return the diff between current and desired state.
-    async fn plan(
-        &self,
-        task: &Task,
-        node: &NodeInfo,
-        exec: &Executor,
-    ) -> anyhow::Result<TaskPlan>;
+    async fn plan(&self, task: &Task, node: &NodeInfo, exec: &Executor)
+    -> anyhow::Result<TaskPlan>;
 
     /// Apply: execute the change. Only called after user confirmation.
     async fn apply(
@@ -534,12 +539,7 @@ pub trait SutraModule: Send + Sync {
     ) -> anyhow::Result<TaskResult>;
 
     /// Check: is desired state already met? (idempotency guard)
-    async fn check(
-        &self,
-        task: &Task,
-        node: &NodeInfo,
-        exec: &Executor,
-    ) -> anyhow::Result<bool>;
+    async fn check(&self, task: &Task, node: &NodeInfo, exec: &Executor) -> anyhow::Result<bool>;
 }
 
 // ── Inventory & targeting ───────────────────────────────────────────────────
@@ -565,10 +565,7 @@ pub fn target_matches(node: &NodeInfo, targets: &[Target]) -> bool {
         let role_ok = t.role.as_ref().is_none_or(|r| r == &node.role);
         let arch_ok = t.arch.as_ref().is_none_or(|a| a == &node.arch);
         let id_ok = t.node_id.as_ref().is_none_or(|id| id == &node.id);
-        let tag_ok = t
-            .tag
-            .as_ref()
-            .is_none_or(|tag| node.tags.contains(tag));
+        let tag_ok = t.tag.as_ref().is_none_or(|tag| node.tags.contains(tag));
         role_ok && arch_ok && id_ok && tag_ok
     })
 }
@@ -847,20 +844,11 @@ pub enum OutputEvent {
         met: bool,
     },
     #[serde(rename = "task_plan")]
-    TaskPlanEvent {
-        node_id: String,
-        plan: TaskPlan,
-    },
+    TaskPlanEvent { node_id: String, plan: TaskPlan },
     #[serde(rename = "task_result")]
-    TaskResultEvent {
-        node_id: String,
-        result: TaskResult,
-    },
+    TaskResultEvent { node_id: String, result: TaskResult },
     #[serde(rename = "node_end")]
-    NodeEnd {
-        node_id: String,
-        success: bool,
-    },
+    NodeEnd { node_id: String, success: bool },
     #[serde(rename = "run_end")]
     RunEnd {
         success: bool,
@@ -942,10 +930,7 @@ version = "{{ version }}"
             "version".to_string(),
             toml::Value::String("2026.3.18".to_string()),
         );
-        playbook_vars.insert(
-            "port".to_string(),
-            toml::Value::Integer(8080),
-        );
+        playbook_vars.insert("port".to_string(), toml::Value::Integer(8080));
 
         let mut ctx = VarContext::new(&playbook_vars, &[]);
         ctx.facts.insert("arch".into(), "x86_64".into());
