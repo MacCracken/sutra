@@ -9,14 +9,21 @@ Declarative infrastructure-as-code for the AGNOS ecosystem. Define desired state
 ## Features
 
 - **TOML playbooks** — canonical, versionable, diffable IaC format
-- **YAML support** — write in YAML, convert to TOML (`sutra convert --to toml`)
+- **YAML ↔ TOML conversion** — write in YAML, convert to TOML and back (`sutra convert --to toml`)
 - **Markdown input** — write intent in Markdown, translate to TOML via hoosh
 - **Natural language** — describe what you want, get a playbook (`sutra nl "install tarang on edge nodes"`)
 - **Dry-run by default** — `sutra apply` shows a plan. `--confirm` executes.
-- **Idempotent modules** — ark, argonaut, file, verify, and more
+- **Idempotent modules** — ark, argonaut, file, shell, user, verify
+- **Tera templates** — `file.template` renders config files with playbook variables
+- **Variables & facts** — `[vars]` in playbooks, `{{ var }}` expansion, `--facts` for OS/distro detection
 - **Fleet orchestration** — target nodes by role, arch, tag, or ID
-- **Multiple transports** — local, daimon HTTP (AGNOS fleet), SSH (anything else)
-- **Audit trail** — every execution logged for compliance
+- **Parallel execution** — `-j N` for concurrent multi-node runs
+- **Multiple transports** — local, SSH (russh), daimon HTTP (AGNOS fleet)
+- **Task dependencies** — `depends_on` with topological ordering
+- **Error recovery** — `on_error: fail | continue | ignore` per-task or per-playbook
+- **JSON output** — `--output json` for scripting, CI/CD, and MCP integration
+- **MCP tools** — 6 tools for AI-agent-driven orchestration
+- **Audit trail** — every execution logged as JSON-lines for compliance
 
 ## Quick Start
 
@@ -101,10 +108,12 @@ task:
 |--------|---------|-------------|
 | `ark` | install, remove, upgrade, pin, list | Package state via AGNOS ark |
 | `argonaut` | enable, disable, start, stop, restart, status | Service state via AGNOS argonaut |
-| `file` | template, copy, absent, permissions, line_in_file | File state |
+| `file` | template, copy, absent, permissions, line_in_file | File state (Tera templates) |
+| `shell` | run, script | Arbitrary commands (`creates`/`removes` for idempotency) |
+| `user` | present, absent, group_present, group_absent | User/group management |
 | `verify` | port_listening, file_exists, service_running, http_ok | Post-task assertions |
 
-More modules planned: aegis, daimon, edge, shell, user, nftables, sysctl.
+Community modules (sutra-community repo): nftables, sysctl, aegis, daimon, edge.
 
 ## Architecture
 
@@ -120,7 +129,7 @@ sutra-mcp        — MCP server (6 tools)
 
 - **Daimon** (port 8090): Agent registration, fleet inventory, audit
 - **Hoosh** (port 8088): NL/Markdown to TOML translation
-- **MCP Tools**: `sutra_apply`, `sutra_plan`, `sutra_check`, `sutra_inventory`, `sutra_translate`, `sutra_convert`
+- **MCP Tools** (6): `sutra_apply`, `sutra_plan`, `sutra_check`, `sutra_inventory`, `sutra_translate`, `sutra_convert`
 - **Marketplace**: `recipes/marketplace/sutra.toml`
 
 ## Building
@@ -129,6 +138,14 @@ sutra-mcp        — MCP server (6 tools)
 cargo build --release --workspace
 cargo test --workspace
 ```
+
+## Security
+
+- **Treat playbooks like code** — review before executing with `--confirm`
+- **Shell escaping** — all user-supplied parameters are escaped via `shlex` before shell interpolation
+- **Dry-run by default** — `sutra apply` only shows a plan; `--confirm` required to execute
+- **SSH host keys** — v1 accepts all server keys (MITM risk on untrusted networks); known_hosts validation planned for v2
+- **Audit trail** — every confirmed run is logged to `~/.local/share/sutra/audit/`
 
 ## License
 

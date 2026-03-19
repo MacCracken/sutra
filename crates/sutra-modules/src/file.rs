@@ -1,6 +1,6 @@
 //! file module — File state management (copy, absent, permissions, line_in_file, template).
 
-use sutra_core::{param_int, param_str, Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
+use sutra_core::{esc, param_int, param_str, Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
 use tera::Tera;
 
 pub struct FileModule;
@@ -166,7 +166,7 @@ impl SutraModule for FileModule {
                 })
             }
             "absent" => {
-                let result = exec.exec(&format!("rm -f {}", path)).await?;
+                let result = exec.exec(&format!("rm -f {}", esc(path))).await?;
                 Ok(TaskResult {
                     module: self.name().to_string(),
                     action: task.action.clone(),
@@ -181,7 +181,7 @@ impl SutraModule for FileModule {
                 let group = param_str(task, "group", "");
 
                 let result = exec
-                    .exec(&format!("chmod {:o} {}", mode, path))
+                    .exec(&format!("chmod {:o} {}", mode, esc(path)))
                     .await?;
                 if !result.success() {
                     return Ok(TaskResult {
@@ -202,7 +202,7 @@ impl SutraModule for FileModule {
                         format!(":{}", group)
                     };
                     let result = exec
-                        .exec(&format!("chown {} {}", chown_target, path))
+                        .exec(&format!("chown {} {}", esc(&chown_target), esc(path)))
                         .await?;
                     if !result.success() {
                         return Ok(TaskResult {

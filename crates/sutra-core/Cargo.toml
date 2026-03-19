@@ -20,6 +20,7 @@ russh = { workspace = true }
 russh-keys = { workspace = true }
 base64 = "0.22"
 async-trait = { workspace = true }
+shlex = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

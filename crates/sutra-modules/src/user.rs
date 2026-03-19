@@ -1,20 +1,20 @@
 //! user module — User and group management.
 
-use sutra_core::{param_bool, param_str, Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
+use sutra_core::{esc, param_bool, param_str, Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
 
 pub struct UserModule;
 
 impl UserModule {
     async fn user_exists(&self, exec: &Executor, username: &str) -> anyhow::Result<bool> {
         let result = exec
-            .exec(&format!("id {} 2>/dev/null", username))
+            .exec(&format!("id {} 2>/dev/null", esc(username)))
             .await?;
         Ok(result.success())
     }
 
     async fn group_exists(&self, exec: &Executor, group: &str) -> anyhow::Result<bool> {
         let result = exec
-            .exec(&format!("getent group {} 2>/dev/null", group))
+            .exec(&format!("getent group {} 2>/dev/null", esc(group)))
             .await?;
         Ok(result.success())
     }
@@ -122,14 +122,14 @@ impl SutraModule for UserModule {
                     cmd.push_str(" --system");
                 }
                 if !home.is_empty() {
-                    cmd.push_str(&format!(" --home-dir {}", home));
+                    cmd.push_str(&format!(" --home-dir {}", esc(home)));
                     cmd.push_str(" --create-home");
                 }
                 if !group.is_empty() {
-                    cmd.push_str(&format!(" --gid {}", group));
+                    cmd.push_str(&format!(" --gid {}", esc(group)));
                 }
-                cmd.push_str(&format!(" --shell {}", shell));
-                cmd.push_str(&format!(" {}", username));
+                cmd.push_str(&format!(" --shell {}", esc(shell)));
+                cmd.push_str(&format!(" {}", esc(username)));
 
                 let result = exec.exec(&cmd).await?;
                 Ok(TaskResult {
@@ -162,9 +162,9 @@ impl SutraModule for UserModule {
 
                 let remove_home = param_bool(task, "remove_home", false);
                 let cmd = if remove_home {
-                    format!("userdel --remove {}", username)
+                    format!("userdel --remove {}", esc(username))
                 } else {
-                    format!("userdel {}", username)
+                    format!("userdel {}", esc(username))
                 };
 
                 let result = exec.exec(&cmd).await?;
@@ -198,9 +198,9 @@ impl SutraModule for UserModule {
 
                 let system = param_bool(task, "system", false);
                 let cmd = if system {
-                    format!("groupadd --system {}", group)
+                    format!("groupadd --system {}", esc(group))
                 } else {
-                    format!("groupadd {}", group)
+                    format!("groupadd {}", esc(group))
                 };
 
                 let result = exec.exec(&cmd).await?;
@@ -232,7 +232,7 @@ impl SutraModule for UserModule {
                     });
                 }
 
-                let result = exec.exec(&format!("groupdel {}", group)).await?;
+                let result = exec.exec(&format!("groupdel {}", esc(group))).await?;
                 Ok(TaskResult {
                     module: self.name().to_string(),
                     action: task.action.clone(),

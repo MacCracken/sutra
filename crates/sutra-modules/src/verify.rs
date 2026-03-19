@@ -1,6 +1,6 @@
 //! verify module — Post-task assertions (port listening, file exists, service running, HTTP OK).
 
-use sutra_core::{param_int, param_str, Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
+use sutra_core::{esc, param_int, param_str, Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
 
 pub struct VerifyModule;
 
@@ -81,7 +81,7 @@ impl SutraModule for VerifyModule {
             "service_running" => {
                 let service = param_str(task, "service", "");
                 let result = exec
-                    .exec(&format!("argonaut status {} 2>/dev/null", service))
+                    .exec(&format!("argonaut status {} 2>/dev/null", esc(service)))
                     .await?;
                 let running = result.success() && result.stdout.contains("running");
                 if running {
@@ -96,7 +96,7 @@ impl SutraModule for VerifyModule {
                 let result = exec
                     .exec(&format!(
                         "curl -sf -o /dev/null -w '%{{http_code}}' --max-time {} {}",
-                        timeout, url
+                        timeout, esc(url)
                     ))
                     .await?;
                 let code = result.stdout.trim();

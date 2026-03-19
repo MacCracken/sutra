@@ -1,6 +1,6 @@
 //! argonaut module — Service state management via AGNOS argonaut init system.
 
-use sutra_core::{param_str, Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
+use sutra_core::{esc, param_str, Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
 
 pub struct ArgonautModule;
 
@@ -12,7 +12,7 @@ impl ArgonautModule {
     /// Query whether a service is enabled (starts on boot).
     async fn is_enabled(&self, exec: &Executor, service: &str) -> anyhow::Result<bool> {
         let result = exec
-            .exec(&format!("argonaut status {} 2>/dev/null", service))
+            .exec(&format!("argonaut status {} 2>/dev/null", esc(service)))
             .await?;
         Ok(result.success() && result.stdout.contains("enabled"))
     }
@@ -20,7 +20,7 @@ impl ArgonautModule {
     /// Query whether a service is currently running.
     async fn is_running(&self, exec: &Executor, service: &str) -> anyhow::Result<bool> {
         let result = exec
-            .exec(&format!("argonaut status {} 2>/dev/null", service))
+            .exec(&format!("argonaut status {} 2>/dev/null", esc(service)))
             .await?;
         Ok(result.success() && result.stdout.contains("running"))
     }
@@ -98,13 +98,14 @@ impl SutraModule for ArgonautModule {
     ) -> anyhow::Result<TaskResult> {
         let service = self.service(task);
 
+        let svc = esc(service);
         let cmd = match task.action.as_str() {
-            "enable" => format!("argonaut enable {}", service),
-            "disable" => format!("argonaut disable {}", service),
-            "start" => format!("argonaut start {}", service),
-            "stop" => format!("argonaut stop {}", service),
-            "restart" => format!("argonaut restart {}", service),
-            "status" => format!("argonaut status {}", service),
+            "enable" => format!("argonaut enable {}", svc),
+            "disable" => format!("argonaut disable {}", svc),
+            "start" => format!("argonaut start {}", svc),
+            "stop" => format!("argonaut stop {}", svc),
+            "restart" => format!("argonaut restart {}", svc),
+            "status" => format!("argonaut status {}", svc),
             other => anyhow::bail!("unknown argonaut action: {}", other),
         };
 

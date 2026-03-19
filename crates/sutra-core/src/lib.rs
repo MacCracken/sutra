@@ -140,7 +140,7 @@ impl Executor {
         match &self.kind {
             ExecutorKind::Local => Ok(tokio::fs::try_exists(path).await.unwrap_or(false)),
             ExecutorKind::Ssh { .. } => {
-                let result = self.exec(&format!("test -e {} && echo yes || echo no", path)).await?;
+                let result = self.exec(&format!("test -e {} && echo yes || echo no", esc(path))).await?;
                 Ok(result.stdout.trim() == "yes")
             }
         }
@@ -151,7 +151,7 @@ impl Executor {
         match &self.kind {
             ExecutorKind::Local => Ok(tokio::fs::read(path).await?),
             ExecutorKind::Ssh { .. } => {
-                let result = self.exec(&format!("base64 {}", path)).await?;
+                let result = self.exec(&format!("base64 {}", esc(path))).await?;
                 if !result.success() {
                     anyhow::bail!("failed to read {}: {}", path, result.stderr.trim());
                 }
@@ -183,15 +183,16 @@ impl Executor {
                     .parent()
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_default();
+                let epath = esc(path);
                 let cmd = if parent.is_empty() {
                     format!(
                         "printf '%s' '{}' | base64 -d > {} && chmod {:o} {}",
-                        encoded, path, mode, path
+                        encoded, epath, mode, epath
                     )
                 } else {
                     format!(
                         "mkdir -p {} && printf '%s' '{}' | base64 -d > {} && chmod {:o} {}",
-                        parent, encoded, path, mode, path
+                        esc(&parent), encoded, epath, mode, epath
                     )
                 };
                 let result = self.exec(&cmd).await?;
@@ -703,6 +704,16 @@ fn toml_value_to_yaml_value(toml_val: &toml::Value) -> serde_yaml::Value {
             serde_yaml::Value::Mapping(map)
         }
     }
+}
+
+// ── Shell safety ────────────────────────────────────────────────────────────
+
+/// Shell-escape a string for safe interpolation into shell commands.
+/// Returns a quoted string that is safe to pass to `sh -c`.
+pub fn esc(s: &str) -> String {
+    shlex::try_quote(s)
+        .unwrap_or_else(|_| std::borrow::Cow::Owned(format!("'{}'", s.replace('\'', "'\\''"))))
+        .into_owned()
 }
 
 // ── Task ordering ───────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 //! ark module — Package state management via AGNOS ark package manager.
 
-use sutra_core::{param_str, Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
+use sutra_core::{esc, param_str, Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
 
 pub struct ArkModule;
 
@@ -22,7 +22,7 @@ impl ArkModule {
         // `ark list --installed` and grep for the package.
         // If ark is not available, fall back to checking if the command exists.
         let result = exec
-            .exec(&format!("ark query {} 2>/dev/null", package))
+            .exec(&format!("ark query {} 2>/dev/null", esc(package)))
             .await?;
         if result.success() && !result.stdout.trim().is_empty() {
             // Output format: "package version"
@@ -103,17 +103,15 @@ impl SutraModule for ArkModule {
         let package = self.package(task);
         let version = self.version(task);
 
+        let pkg = esc(package);
+        let ver = esc(version);
         let cmd = match task.action.as_str() {
-            "install" if version != "latest" => {
-                format!("ark install {}={}", package, version)
-            }
-            "install" => format!("ark install {}", package),
-            "remove" => format!("ark remove -y {}", package),
-            "upgrade" if version != "latest" => {
-                format!("ark upgrade {}={}", package, version)
-            }
-            "upgrade" => format!("ark upgrade {}", package),
-            "pin" => format!("ark pin {}={}", package, version),
+            "install" if version != "latest" => format!("ark install {}={}", pkg, ver),
+            "install" => format!("ark install {}", pkg),
+            "remove" => format!("ark remove -y {}", pkg),
+            "upgrade" if version != "latest" => format!("ark upgrade {}={}", pkg, ver),
+            "upgrade" => format!("ark upgrade {}", pkg),
+            "pin" => format!("ark pin {}={}", pkg, ver),
             "list" => "ark list --installed".to_string(),
             other => anyhow::bail!("unknown ark action: {}", other),
         };
