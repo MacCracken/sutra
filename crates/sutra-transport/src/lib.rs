@@ -83,6 +83,8 @@ mod tests {
             tags: vec![],
             transport: "local".to_string(),
             ssh_user: None,
+            ssh_port: None,
+            ssh_key: None,
         };
         let _transport = transport_for(&node);
     }

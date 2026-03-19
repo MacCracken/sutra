@@ -296,11 +296,7 @@ mod tests {
             toml::Value::String("root".to_string()),
         );
 
-        let task = Task {
-            module: "user".to_string(),
-            action: "present".to_string(),
-            params,
-        };
+        let task = Task::new("user", "present", params);
 
         // root should exist on any Linux system
         assert!(module.check(&task, &test_node(), &exec).await.unwrap());
@@ -320,11 +316,7 @@ mod tests {
             toml::Value::String("sutra_nonexistent_test_user_12345".to_string()),
         );
 
-        let task = Task {
-            module: "user".to_string(),
-            action: "present".to_string(),
-            params,
-        };
+        let task = Task::new("user", "present", params);
 
         assert!(!module.check(&task, &test_node(), &exec).await.unwrap());
     }
@@ -339,11 +331,7 @@ mod tests {
             toml::Value::String("root".to_string()),
         );
 
-        let task = Task {
-            module: "user".to_string(),
-            action: "group_present".to_string(),
-            params,
-        };
+        let task = Task::new("user", "group_present", params);
 
         assert!(module.check(&task, &test_node(), &exec).await.unwrap());
     }

@@ -138,11 +138,7 @@ mod tests {
             toml::Value::String("echo hello".to_string()),
         );
 
-        let task = Task {
-            module: "shell".to_string(),
-            action: "run".to_string(),
-            params,
-        };
+        let task = Task::new("shell", "run", params);
 
         let result = module.apply(&task, &test_node(), &exec).await.unwrap();
         assert!(result.success);
@@ -165,11 +161,7 @@ mod tests {
             toml::Value::String(path.clone()),
         );
 
-        let task = Task {
-            module: "shell".to_string(),
-            action: "run".to_string(),
-            params,
-        };
+        let task = Task::new("shell", "run", params);
 
         // File doesn't exist — should plan to change
         let plan = module.plan(&task, &test_node(), &exec).await.unwrap();

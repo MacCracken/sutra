@@ -175,11 +175,7 @@ mod tests {
             toml::Value::String("tarang".to_string()),
         );
 
-        let task = Task {
-            module: "argonaut".to_string(),
-            action: "enable".to_string(),
-            params,
-        };
+        let task = Task::new("argonaut", "enable", params);
 
         let plan = module.plan(&task, &test_node(), &exec).await.unwrap();
         assert!(plan.description.contains("tarang"));

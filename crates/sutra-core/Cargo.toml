@@ -16,6 +16,10 @@ tracing = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+russh = { workspace = true }
+russh-keys = { workspace = true }
+base64 = "0.22"
+async-trait = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

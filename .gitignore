@@ -1,6 +1,24 @@
-/target
+# Build
+/target/
 **/*.rs.bk
-Cargo.lock
+
+# Editor
 *.swp
 *.swo
+*~
+.vscode/
+.idea/
+*.iml
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Audit logs (generated at runtime)
+sutra-audit.jsonl

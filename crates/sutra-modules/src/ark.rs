@@ -199,11 +199,7 @@ mod tests {
             toml::Value::String("2026.3.18".to_string()),
         );
 
-        let task = Task {
-            module: "ark".to_string(),
-            action: "install".to_string(),
-            params,
-        };
+        let task = Task::new("ark", "install", params);
 
         let plan = module.plan(&task, &test_node(), &exec).await.unwrap();
         // On a machine without ark, package won't be found, so changed=true
@@ -215,11 +211,7 @@ mod tests {
         let module = ArkModule;
         let exec = Executor::local();
 
-        let task = Task {
-            module: "ark".to_string(),
-            action: "list".to_string(),
-            params: HashMap::new(),
-        };
+        let task = Task::new("ark", "list", HashMap::new());
 
         let plan = module.plan(&task, &test_node(), &exec).await.unwrap();
         assert!(!plan.changed);

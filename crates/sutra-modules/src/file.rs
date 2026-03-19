@@ -1,12 +1,42 @@
-//! file module — File state management (copy, absent, permissions, line_in_file).
+//! file module — File state management (copy, absent, permissions, line_in_file, template).
 
 use sutra_core::{param_int, param_str, Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
+use tera::Tera;
 
 pub struct FileModule;
 
 impl FileModule {
     fn path<'a>(&self, task: &'a Task) -> &'a str {
         param_str(task, "path", "unknown")
+    }
+
+    /// Extract template variables from task params (all params except module/action/path/src/mode).
+    fn template_vars(task: &Task) -> tera::Context {
+        let mut ctx = tera::Context::new();
+        for (k, v) in &task.params {
+            match k.as_str() {
+                "path" | "src" | "mode" | "module" | "action" => continue,
+                _ => {
+                    let val = match v {
+                        toml::Value::String(s) => tera::Value::String(s.clone()),
+                        toml::Value::Integer(i) => tera::Value::Number((*i).into()),
+                        toml::Value::Float(f) => {
+                            tera::Value::Number(serde_json::Number::from_f64(*f).unwrap())
+                        }
+                        toml::Value::Boolean(b) => tera::Value::Bool(*b),
+                        other => tera::Value::String(other.to_string()),
+                    };
+                    ctx.insert(k, &val);
+                }
+            }
+        }
+        ctx
+    }
+
+    /// Render a Tera template string with the given context.
+    fn render_template(template: &str, ctx: &tera::Context) -> anyhow::Result<String> {
+        let result = Tera::one_off(template, ctx, false)?;
+        Ok(result)
     }
 }
 
@@ -81,10 +111,26 @@ impl SutraModule for FileModule {
                 }
             }
             "template" => {
-                // Template support deferred to v1 (needs Tera/Handlebars).
-                // For now, treat as copy with source file.
                 let src = param_str(task, "src", "");
-                (true, format!("template {} -> {}", src, path), None)
+                let exists = exec.file_exists(path).await?;
+                if exists && exec.file_exists(src).await.unwrap_or(false) {
+                    // Render template and compare with current file.
+                    let tmpl = exec.read_file_string(src).await.unwrap_or_default();
+                    let vars = Self::template_vars(task);
+                    match Self::render_template(&tmpl, &vars) {
+                        Ok(rendered) => {
+                            let current = exec.read_file_string(path).await.unwrap_or_default();
+                            if current == rendered {
+                                (false, format!("{} already matches template", path), None)
+                            } else {
+                                (true, format!("render template {} -> {}", src, path), None)
+                            }
+                        }
+                        Err(_) => (true, format!("render template {} -> {}", src, path), None),
+                    }
+                } else {
+                    (true, format!("render template {} -> {}", src, path), None)
+                }
             }
             other => anyhow::bail!("unknown file action: {}", other),
         };
@@ -214,20 +260,21 @@ impl SutraModule for FileModule {
                 })
             }
             "template" => {
-                // Template deferred to v1 — for now, just copy the source file.
                 let src = param_str(task, "src", "");
                 if src.is_empty() {
                     anyhow::bail!("template action requires 'src' parameter");
                 }
-                let content = exec.read_file(src).await?;
+                let tmpl_content = exec.read_file_string(src).await?;
+                let vars = Self::template_vars(task);
+                let rendered = Self::render_template(&tmpl_content, &vars)?;
                 let mode = param_int(task, "mode", 0o644) as u32;
-                exec.write_file(path, &content, mode).await?;
+                exec.write_file(path, rendered.as_bytes(), mode).await?;
                 Ok(TaskResult {
                     module: self.name().to_string(),
                     action: task.action.clone(),
                     success: true,
                     changed: true,
-                    message: format!("copied {} -> {}", src, path),
+                    message: format!("rendered {} -> {}", src, path),
                 })
             }
             other => anyhow::bail!("unknown file action: {}", other),
@@ -291,11 +338,7 @@ mod tests {
             toml::Value::String("hello world".to_string()),
         );
 
-        let task = Task {
-            module: "file".to_string(),
-            action: "copy".to_string(),
-            params,
-        };
+        let task = Task::new("file", "copy", params);
 
         // File doesn't exist yet — plan should say create
         let plan = module.plan(&task, &test_node(), &exec).await.unwrap();
@@ -328,11 +371,7 @@ mod tests {
         let mut params = HashMap::new();
         params.insert("path".to_string(), toml::Value::String(path.clone()));
 
-        let task = Task {
-            module: "file".to_string(),
-            action: "absent".to_string(),
-            params,
-        };
+        let task = Task::new("file", "absent", params);
 
         let plan = module.plan(&task, &test_node(), &exec).await.unwrap();
         assert!(plan.changed);
@@ -361,11 +400,7 @@ mod tests {
             toml::Value::String("line3".to_string()),
         );
 
-        let task = Task {
-            module: "file".to_string(),
-            action: "line_in_file".to_string(),
-            params,
-        };
+        let task = Task::new("file", "line_in_file", params);
 
         // line3 not present — should change
         let plan = module.plan(&task, &test_node(), &exec).await.unwrap();

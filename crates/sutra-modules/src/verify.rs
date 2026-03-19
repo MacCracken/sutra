@@ -152,11 +152,7 @@ mod tests {
             toml::Value::String("/tmp".to_string()),
         );
 
-        let task = Task {
-            module: "verify".to_string(),
-            action: "file_exists".to_string(),
-            params,
-        };
+        let task = Task::new("verify", "file_exists", params);
 
         let result = module.apply(&task, &test_node(), &exec).await.unwrap();
         assert!(result.success);
@@ -173,11 +169,7 @@ mod tests {
             toml::Value::String("/nonexistent-sutra-test-path".to_string()),
         );
 
-        let task = Task {
-            module: "verify".to_string(),
-            action: "file_exists".to_string(),
-            params,
-        };
+        let task = Task::new("verify", "file_exists", params);
 
         let result = module.apply(&task, &test_node(), &exec).await.unwrap();
         assert!(!result.success);
@@ -190,11 +182,7 @@ mod tests {
         let mut params = HashMap::new();
         params.insert("port".to_string(), toml::Value::Integer(8070));
 
-        let task = Task {
-            module: "verify".to_string(),
-            action: "port_listening".to_string(),
-            params,
-        };
+        let task = Task::new("verify", "port_listening", params);
 
         let plan = module.plan(&task, &test_node(), &exec).await.unwrap();
         assert!(!plan.changed);

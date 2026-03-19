@@ -1,11 +1,13 @@
 //! Sutra — AI-native infrastructure orchestration for AGNOS.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use sutra_core::{
-    parse_inventory, parse_playbook, target_matches, toml_to_yaml, yaml_to_toml, Executor,
-    NodeInfo, RunRecord, SutraModule,
+    gather_facts, order_tasks, parse_inventory, parse_playbook, resolve_on_error, target_matches,
+    toml_to_yaml, yaml_to_toml, Executor, NodeInfo, OnError, OutputEvent, RunRecord, SutraModule,
+    TaskResult, VarContext,
 };
 use sutra_modules::ModuleRegistry;
 
@@ -18,6 +20,16 @@ use sutra_modules::ModuleRegistry;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    /// Output format
+    #[arg(long, global = true, default_value = "human")]
+    output: OutputFormat,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum OutputFormat {
+    Human,
+    Json,
 }
 
 #[derive(Subcommand)]
@@ -35,6 +47,18 @@ enum Commands {
         /// Inventory file
         #[arg(short, long)]
         inventory: Option<PathBuf>,
+        /// Run on nodes in parallel (max concurrent nodes)
+        #[arg(short = 'j', long)]
+        parallel: Option<usize>,
+        /// Continue on node failure
+        #[arg(long)]
+        continue_on_error: bool,
+        /// Set variable (key=value), can be repeated
+        #[arg(long = "var", value_parser = parse_var)]
+        vars: Vec<(String, String)>,
+        /// Gather node facts before execution
+        #[arg(long)]
+        facts: bool,
     },
     /// Verify current state matches desired
     Check {
@@ -43,6 +67,9 @@ enum Commands {
         /// Inventory file
         #[arg(short, long)]
         inventory: Option<PathBuf>,
+        /// Set variable (key=value)
+        #[arg(long = "var", value_parser = parse_var)]
+        vars: Vec<(String, String)>,
     },
     /// Show detailed execution plan
     Plan {
@@ -51,6 +78,12 @@ enum Commands {
         /// Inventory file
         #[arg(short, long)]
         inventory: Option<PathBuf>,
+        /// Set variable (key=value)
+        #[arg(long = "var", value_parser = parse_var)]
+        vars: Vec<(String, String)>,
+        /// Gather node facts before planning
+        #[arg(long)]
+        facts: bool,
     },
     /// Translate Markdown to TOML playbook via hoosh
     Translate {
@@ -82,7 +115,7 @@ enum Commands {
     },
     /// List available modules and actions
     Modules,
-    /// Validate playbook syntax
+    /// Validate playbook syntax and module references
     Validate {
         /// Path to TOML playbook
         playbook: PathBuf,
@@ -95,6 +128,35 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+}
+
+fn parse_var(s: &str) -> Result<(String, String), String> {
+    let pos = s
+        .find('=')
+        .ok_or_else(|| format!("expected KEY=VALUE, got '{}'", s))?;
+    Ok((s[..pos].to_string(), s[pos + 1..].to_string()))
+}
+
+/// Output helper — emit human-readable or JSON output.
+struct Output {
+    format: OutputFormat,
+}
+
+impl Output {
+    fn emit(&self, event: &OutputEvent) {
+        match self.format {
+            OutputFormat::Json => {
+                println!("{}", serde_json::to_string(event).unwrap());
+            }
+            OutputFormat::Human => {
+                // Human output is handled inline for richer formatting.
+            }
+        }
+    }
+
+    fn is_json(&self) -> bool {
+        matches!(self.format, OutputFormat::Json)
+    }
 }
 
 /// Resolve the list of target nodes for a playbook run.
@@ -110,10 +172,8 @@ fn resolve_nodes(
         vec![NodeInfo::localhost()]
     };
 
-    // Filter by playbook targets.
     nodes.retain(|n| target_matches(n, &pb.target));
 
-    // Apply --limit filter.
     if let Some(limit_id) = limit {
         nodes.retain(|n| n.id == *limit_id);
     }
@@ -125,7 +185,6 @@ fn resolve_nodes(
     Ok(nodes)
 }
 
-/// Default audit log directory.
 fn audit_log_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("SUTRA_AUDIT_DIR") {
         PathBuf::from(dir)
@@ -133,6 +192,161 @@ fn audit_log_dir() -> PathBuf {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         PathBuf::from(home).join(".local/share/sutra/audit")
     }
+}
+
+/// Execute tasks on a single node. Returns (node_id, record, output_lines, success).
+async fn execute_on_node(
+    node: NodeInfo,
+    tasks: Vec<sutra_core::Task>,
+    task_order: Vec<usize>,
+    registry: Arc<ModuleRegistry>,
+    confirm: bool,
+    var_ctx: VarContext,
+    gather_node_facts: bool,
+    playbook_on_error: OnError,
+    playbook_path: String,
+    out: Arc<Output>,
+) -> anyhow::Result<(String, RunRecord, Vec<String>, bool)> {
+    let exec = Executor::for_node(&node);
+    let mut record = RunRecord::new(&playbook_path, &node.id);
+    let mut lines = Vec::new();
+    let mut success = true;
+
+    // Gather facts if requested.
+    let mut ctx = var_ctx;
+    if gather_node_facts {
+        ctx.facts = gather_facts(&exec).await;
+        if out.is_json() {
+            out.emit(&OutputEvent::NodeStart {
+                node_id: node.id.clone(),
+                facts: ctx.facts.clone(),
+            });
+        } else {
+            lines.push(format!(
+                "  Facts: os={}, arch={}, hostname={}",
+                ctx.facts.get("os").unwrap_or(&"?".into()),
+                ctx.facts.get("arch").unwrap_or(&"?".into()),
+                ctx.facts.get("hostname").unwrap_or(&"?".into()),
+            ));
+        }
+    } else if out.is_json() {
+        out.emit(&OutputEvent::NodeStart {
+            node_id: node.id.clone(),
+            facts: std::collections::HashMap::new(),
+        });
+    }
+
+    for &idx in &task_order {
+        let task = &tasks[idx];
+        let expanded = ctx.expand_task(task);
+        let err_strategy = resolve_on_error(&expanded, &playbook_on_error);
+
+        let Some(module) = registry.get(&expanded.module) else {
+            let msg = format!("  [ERROR]  Unknown module: {}", expanded.module);
+            lines.push(msg);
+            continue;
+        };
+
+        // Idempotency check.
+        let already_met = module
+            .check(&expanded, &node, &exec)
+            .await
+            .unwrap_or(false);
+
+        if out.is_json() {
+            out.emit(&OutputEvent::TaskCheck {
+                node_id: node.id.clone(),
+                module: expanded.module.clone(),
+                action: expanded.action.clone(),
+                met: already_met,
+            });
+        }
+
+        if already_met {
+            let msg = format!(
+                "  [OK]     {} {} — already in desired state",
+                expanded.module, expanded.action
+            );
+            lines.push(msg);
+            record.results.push(TaskResult {
+                module: expanded.module.clone(),
+                action: expanded.action.clone(),
+                success: true,
+                changed: false,
+                message: "already in desired state".to_string(),
+            });
+            continue;
+        }
+
+        let plan = module.plan(&expanded, &node, &exec).await?;
+
+        if out.is_json() {
+            out.emit(&OutputEvent::TaskPlanEvent {
+                node_id: node.id.clone(),
+                plan: plan.clone(),
+            });
+        }
+
+        if plan.changed {
+            lines.push(format!("  [CHANGE] {}", plan.description));
+        } else {
+            lines.push(format!("  [OK]     {}", plan.description));
+        }
+
+        if let Some(ref diff) = plan.diff {
+            for line in diff.lines() {
+                lines.push(format!("           {}", line));
+            }
+        }
+
+        if confirm && plan.changed {
+            let result = module.apply(&expanded, &node, &exec).await?;
+
+            if out.is_json() {
+                out.emit(&OutputEvent::TaskResultEvent {
+                    node_id: node.id.clone(),
+                    result: result.clone(),
+                });
+            }
+
+            if result.success {
+                lines.push(format!("  [DONE]   {}", result.message));
+            } else {
+                match err_strategy {
+                    OnError::Fail => {
+                        lines.push(format!("  [FAIL]   {}", result.message));
+                        record.results.push(result);
+                        record.finish();
+                        record.write_to_log(&audit_log_dir()).ok();
+                        success = false;
+                        break;
+                    }
+                    OnError::Continue => {
+                        lines.push(format!("  [FAIL]   {} (continuing)", result.message));
+                        success = false;
+                    }
+                    OnError::Ignore => {
+                        lines.push(format!("  [SKIP]   {} (ignored)", result.message));
+                    }
+                }
+            }
+            record.results.push(result);
+        }
+    }
+
+    record.finish();
+    if confirm {
+        record.write_to_log(&audit_log_dir()).ok();
+    }
+
+    if out.is_json() {
+        out.emit(&OutputEvent::NodeEnd {
+            node_id: node.id.clone(),
+            success,
+        });
+    }
+
+    Ok((node.id.clone(), record, lines, success))
 }
 
 #[tokio::main]
@@ -145,6 +359,9 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
+    let out = Arc::new(Output {
+        format: cli.output,
+    });
 
     match cli.command {
         Commands::Apply {
@@ -152,169 +369,304 @@ async fn main() -> anyhow::Result<()> {
             confirm,
             limit,
             inventory,
+            parallel,
+            continue_on_error,
+            vars,
+            facts,
         } => {
             let pb = parse_playbook(&playbook)?;
-            let registry = ModuleRegistry::new();
+            let registry = Arc::new(ModuleRegistry::new());
             let nodes = resolve_nodes(&pb, &inventory, &limit)?;
+            let var_ctx = VarContext::new(&pb.vars, &vars);
+            let node_ids: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
 
-            println!("Playbook: {}", pb.playbook.name);
-            if !pb.playbook.description.is_empty() {
-                println!("  {}", pb.playbook.description);
+            if out.is_json() {
+                out.emit(&OutputEvent::RunStart {
+                    playbook: pb.playbook.name.clone(),
+                    nodes: node_ids.clone(),
+                });
+            } else {
+                println!("Playbook: {}", pb.playbook.name);
+                if !pb.playbook.description.is_empty() {
+                    println!("  {}", pb.playbook.description);
+                }
+                println!("Nodes: {}", node_ids.join(", "));
+                println!();
             }
-            println!("Nodes: {}", nodes.iter().map(|n| n.id.as_str()).collect::<Vec<_>>().join(", "));
-            println!();
 
-            for node in &nodes {
-                let exec = Executor::for_node(node);
-                let mut record = RunRecord::new(
-                    playbook.to_string_lossy().as_ref(),
-                    &node.id,
-                );
+            let playbook_path = playbook.to_string_lossy().to_string();
+            let task_order = order_tasks(&pb.task)?;
+            let pb_on_error = pb.playbook.on_error.clone();
+            let concurrency = parallel.unwrap_or(1);
+            let multi = nodes.len() > 1;
 
-                if nodes.len() > 1 {
-                    println!("--- {} ({}) ---", node.id, node.host);
+            let mut changed_total = 0u32;
+            let mut ok_total = 0u32;
+            let mut failed_total = 0u32;
+            let mut all_success = true;
+
+            if concurrency > 1 && nodes.len() > 1 {
+                // Parallel execution with bounded concurrency.
+                let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
+                let mut handles = Vec::new();
+
+                for node in nodes {
+                    let tasks = pb.task.clone();
+                    let t_order = task_order.clone();
+                    let reg = Arc::clone(&registry);
+                    let ctx = var_ctx.clone();
+                    let pb_err = pb_on_error.clone();
+                    let pb_path = playbook_path.clone();
+                    let sem = Arc::clone(&semaphore);
+                    let o = Arc::clone(&out);
+
+                    handles.push(tokio::spawn(async move {
+                        let _permit = sem.acquire().await.unwrap();
+                        execute_on_node(node, tasks, t_order, reg, confirm, ctx, facts, pb_err, pb_path, o).await
+                    }));
                 }
 
-                for task in &pb.task {
-                    let Some(module) = registry.get(&task.module) else {
-                        eprintln!("  [ERROR]  Unknown module: {}", task.module);
-                        continue;
-                    };
+                for handle in handles {
+                    let result = handle.await??;
+                    let (node_id, record, lines, success) = result;
 
-                    // Idempotency check — skip if desired state already met.
-                    let already_met = module.check(task, node, &exec).await.unwrap_or(false);
-                    if already_met {
-                        println!("  [OK]     {} {} — already in desired state", task.module, task.action);
-                        record.results.push(sutra_core::TaskResult {
-                            module: task.module.clone(),
-                            action: task.action.clone(),
-                            success: true,
-                            changed: false,
-                            message: "already in desired state".to_string(),
-                        });
-                        continue;
-                    }
-
-                    let plan = module.plan(task, node, &exec).await?;
-
-                    if plan.changed {
-                        println!("  [CHANGE] {}", plan.description);
-                    } else {
-                        println!("  [OK]     {}", plan.description);
-                    }
-
-                    if let Some(ref diff) = plan.diff {
-                        for line in diff.lines() {
-                            println!("           {}", line);
+                    if !out.is_json() {
+                        if multi {
+                            println!("--- {} ---", node_id);
+                        }
+                        for line in &lines {
+                            println!("{}", line);
                         }
                     }
 
-                    if confirm && plan.changed {
-                        let result = module.apply(task, node, &exec).await?;
-                        if result.success {
-                            println!("  [DONE]   {}", result.message);
+                    for r in &record.results {
+                        if r.changed {
+                            changed_total += 1;
                         } else {
-                            eprintln!("  [FAIL]   {}", result.message);
-                            record.results.push(result);
-                            record.finish();
-                            record.write_to_log(&audit_log_dir()).ok();
-                            anyhow::bail!(
-                                "task {} {} failed on {}, aborting",
-                                task.module,
-                                task.action,
-                                node.id
-                            );
+                            ok_total += 1;
                         }
-                        record.results.push(result);
+                        if !r.success {
+                            failed_total += 1;
+                        }
+                    }
+
+                    if !success {
+                        all_success = false;
+                        if !continue_on_error {
+                            break;
+                        }
                     }
                 }
+            } else {
+                // Sequential execution.
+                for node in nodes {
+                    let tasks = pb.task.clone();
+                    let (node_id, record, lines, success) = execute_on_node(
+                        node,
+                        tasks,
+                        task_order.clone(),
+                        Arc::clone(&registry),
+                        confirm,
+                        var_ctx.clone(),
+                        facts,
+                        pb_on_error.clone(),
+                        playbook_path.clone(),
+                        Arc::clone(&out),
+                    )
+                    .await?;
 
-                record.finish();
-                if confirm {
-                    record.write_to_log(&audit_log_dir()).ok();
+                    if !out.is_json() {
+                        if multi {
+                            println!("--- {} ---", node_id);
+                        }
+                        for line in &lines {
+                            println!("{}", line);
+                        }
+                    }
+
+                    for r in &record.results {
+                        if r.changed {
+                            changed_total += 1;
+                        } else {
+                            ok_total += 1;
+                        }
+                        if !r.success {
+                            failed_total += 1;
+                        }
+                    }
+
+                    if !success {
+                        all_success = false;
+                        if !continue_on_error {
+                            break;
+                        }
+                    }
                 }
             }
 
-            if confirm {
-                println!("\nDone. Audit log: {}", audit_log_dir().display());
+            if out.is_json() {
+                out.emit(&OutputEvent::RunEnd {
+                    success: all_success,
+                    changed: changed_total,
+                    ok: ok_total,
+                    failed: failed_total,
+                });
+            } else if confirm {
+                println!(
+                    "\nDone. changed={} ok={} failed={} | Audit: {}",
+                    changed_total,
+                    ok_total,
+                    failed_total,
+                    audit_log_dir().display()
+                );
             } else {
                 println!("\nDry-run complete. Use --confirm to apply.");
             }
+
+            if !all_success {
+                std::process::exit(1);
+            }
         }
 
-        Commands::Check { playbook, inventory } => {
+        Commands::Check {
+            playbook,
+            inventory,
+            vars,
+        } => {
             let pb = parse_playbook(&playbook)?;
             let registry = ModuleRegistry::new();
             let nodes = resolve_nodes(&pb, &inventory, &None)?;
+            let var_ctx = VarContext::new(&pb.vars, &vars);
 
-            println!("Checking state for: {}", pb.playbook.name);
+            if !out.is_json() {
+                println!("Checking state for: {}", pb.playbook.name);
+            }
+
             let mut all_ok = true;
 
             for node in &nodes {
                 let exec = Executor::for_node(node);
 
-                if nodes.len() > 1 {
+                if !out.is_json() && nodes.len() > 1 {
                     println!("--- {} ---", node.id);
                 }
 
                 for task in &pb.task {
-                    let Some(module) = registry.get(&task.module) else {
-                        eprintln!("  [ERROR]  Unknown module: {}", task.module);
+                    let expanded = var_ctx.expand_task(task);
+                    let Some(module) = registry.get(&expanded.module) else {
+                        eprintln!("  [ERROR]  Unknown module: {}", expanded.module);
                         all_ok = false;
                         continue;
                     };
 
-                    match module.check(task, node, &exec).await {
+                    match module.check(&expanded, node, &exec).await {
                         Ok(true) => {
-                            println!("  [OK]     {} {}", task.module, task.action);
+                            if out.is_json() {
+                                out.emit(&OutputEvent::TaskCheck {
+                                    node_id: node.id.clone(),
+                                    module: expanded.module.clone(),
+                                    action: expanded.action.clone(),
+                                    met: true,
+                                });
+                            } else {
+                                println!("  [OK]     {} {}", expanded.module, expanded.action);
+                            }
                         }
                         Ok(false) => {
-                            println!("  [DRIFT]  {} {} — desired state not met", task.module, task.action);
+                            if out.is_json() {
+                                out.emit(&OutputEvent::TaskCheck {
+                                    node_id: node.id.clone(),
+                                    module: expanded.module.clone(),
+                                    action: expanded.action.clone(),
+                                    met: false,
+                                });
+                            } else {
+                                println!(
+                                    "  [DRIFT]  {} {} — desired state not met",
+                                    expanded.module, expanded.action
+                                );
+                            }
                             all_ok = false;
                         }
                         Err(e) => {
-                            eprintln!("  [ERROR]  {} {} — {}", task.module, task.action, e);
+                            eprintln!(
+                                "  [ERROR]  {} {} — {}",
+                                expanded.module, expanded.action, e
+                            );
                             all_ok = false;
                         }
                     }
                 }
             }
 
-            if all_ok {
-                println!("\nAll checks passed.");
-            } else {
-                println!("\nSome checks failed. Run `sutra apply` to remediate.");
+            if !out.is_json() {
+                if all_ok {
+                    println!("\nAll checks passed.");
+                } else {
+                    println!("\nSome checks failed. Run `sutra apply` to remediate.");
+                }
+            }
+
+            if !all_ok {
                 std::process::exit(1);
             }
         }
 
-        Commands::Plan { playbook, inventory } => {
+        Commands::Plan {
+            playbook,
+            inventory,
+            vars,
+            facts,
+        } => {
             let pb = parse_playbook(&playbook)?;
             let registry = ModuleRegistry::new();
             let nodes = resolve_nodes(&pb, &inventory, &None)?;
+            let mut var_ctx = VarContext::new(&pb.vars, &vars);
 
-            println!("Execution plan for: {}", pb.playbook.name);
-            println!("Target nodes: {}\n", nodes.iter().map(|n| n.id.as_str()).collect::<Vec<_>>().join(", "));
+            if !out.is_json() {
+                println!("Execution plan for: {}", pb.playbook.name);
+                println!(
+                    "Target nodes: {}\n",
+                    nodes
+                        .iter()
+                        .map(|n| n.id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
 
             for node in &nodes {
                 let exec = Executor::for_node(node);
 
-                if nodes.len() > 1 {
+                if facts {
+                    var_ctx.facts = gather_facts(&exec).await;
+                }
+
+                if !out.is_json() && nodes.len() > 1 {
                     println!("--- {} ---", node.id);
                 }
 
                 for (i, task) in pb.task.iter().enumerate() {
-                    let Some(module) = registry.get(&task.module) else {
-                        eprintln!("  {}. [ERROR] Unknown module: {}", i + 1, task.module);
+                    let expanded = var_ctx.expand_task(task);
+                    let Some(module) = registry.get(&expanded.module) else {
+                        eprintln!("  {}. [ERROR] Unknown module: {}", i + 1, expanded.module);
                         continue;
                     };
 
-                    let plan = module.plan(task, node, &exec).await?;
-                    let tag = if plan.changed { "CHANGE" } else { "OK" };
-                    println!("  {}. [{}] {}", i + 1, tag, plan.description);
-                    if let Some(ref diff) = plan.diff {
-                        for line in diff.lines() {
-                            println!("           {}", line);
+                    let plan = module.plan(&expanded, node, &exec).await?;
+
+                    if out.is_json() {
+                        out.emit(&OutputEvent::TaskPlanEvent {
+                            node_id: node.id.clone(),
+                            plan,
+                        });
+                    } else {
+                        let tag = if plan.changed { "CHANGE" } else { "OK" };
+                        println!("  {}. [{}] {}", i + 1, tag, plan.description);
+                        if let Some(ref diff) = plan.diff {
+                            for line in diff.lines() {
+                                println!("           {}", line);
+                            }
                         }
                     }
                 }
@@ -375,7 +727,10 @@ async fn main() -> anyhow::Result<()> {
                     Ok(nodes) => {
                         println!("Fleet: {} nodes", nodes.len());
                         for node in &nodes {
-                            println!("  {} ({}) — {} {}", node.id, node.host, node.role, node.arch);
+                            println!(
+                                "  {} ({}) — {} {}",
+                                node.id, node.host, node.role, node.arch
+                            );
                         }
                     }
                     Err(e) => println!("  Could not reach daimon: {}", e),
@@ -391,42 +746,40 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        Commands::Validate { playbook } => {
-            match parse_playbook(&playbook) {
-                Ok(pb) => {
-                    let registry = ModuleRegistry::new();
-                    let mut errors = 0;
+        Commands::Validate { playbook } => match parse_playbook(&playbook) {
+            Ok(pb) => {
+                let registry = ModuleRegistry::new();
+                let mut errors = 0;
 
-                    for task in &pb.task {
-                        if registry.get(&task.module).is_none() {
-                            eprintln!("  ERROR: Unknown module '{}'", task.module);
+                for task in &pb.task {
+                    if registry.get(&task.module).is_none() {
+                        eprintln!("  ERROR: Unknown module '{}'", task.module);
+                        errors += 1;
+                    }
+
+                    if let Some(module) = registry.get(&task.module) {
+                        if !module.actions().contains(&task.action.as_str()) {
+                            eprintln!(
+                                "  ERROR: Unknown action '{}' for module '{}'",
+                                task.action, task.module
+                            );
                             errors += 1;
                         }
-
-                        if let Some(module) = registry.get(&task.module) {
-                            if !module.actions().contains(&task.action.as_str()) {
-                                eprintln!(
-                                    "  ERROR: Unknown action '{}' for module '{}'",
-                                    task.action, task.module
-                                );
-                                errors += 1;
-                            }
-                        }
-                    }
-
-                    if errors == 0 {
-                        println!("Valid: {} ({} tasks)", pb.playbook.name, pb.task.len());
-                    } else {
-                        eprintln!("{} validation errors", errors);
-                        std::process::exit(1);
                     }
                 }
-                Err(e) => {
-                    eprintln!("Parse error: {}", e);
+
+                if errors == 0 {
+                    println!("Valid: {} ({} tasks)", pb.playbook.name, pb.task.len());
+                } else {
+                    eprintln!("{} validation errors", errors);
                     std::process::exit(1);
                 }
             }
-        }
+            Err(e) => {
+                eprintln!("Parse error: {}", e);
+                std::process::exit(1);
+            }
+        },
 
         Commands::Nl { prompt, output } => {
             let prompt_str = prompt.join(" ");
