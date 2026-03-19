@@ -1,0 +1,19 @@
+[package]
+name = "sutra-ai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AI integration: Markdown/NL to TOML translation, daimon client, hoosh client"
+
+[dependencies]
+sutra-core = { path = "../sutra-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+comrak = { workspace = true }

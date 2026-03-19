@@ -1,0 +1,18 @@
+[package]
+name = "sutra-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MCP server: sutra_apply, sutra_plan, sutra_check, sutra_inventory, sutra_translate"
+
+[dependencies]
+sutra-core = { path = "../sutra-core" }
+sutra-modules = { path = "../sutra-modules" }
+sutra-transport = { path = "../sutra-transport" }
+sutra-ai = { path = "../sutra-ai" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }

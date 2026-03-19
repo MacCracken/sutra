@@ -1,0 +1,29 @@
+# Example: Same playbook in YAML format
+# Convert to canonical TOML with: sutra convert --to toml playbooks/deploy-tarang.yaml
+
+playbook:
+  name: Deploy tarang to edge fleet
+  description: Install and enable tarang media framework on all aarch64 edge nodes
+
+target:
+  - role: edge
+    arch: aarch64
+
+task:
+  - module: ark
+    action: install
+    package: tarang
+    version: "2026.3.18"
+
+  - module: argonaut
+    action: enable
+    service: tarang
+
+  - module: verify
+    action: port_listening
+    port: 8070
+    timeout_secs: 10
+
+  - module: daimon
+    action: report
+    status: tarang deployed

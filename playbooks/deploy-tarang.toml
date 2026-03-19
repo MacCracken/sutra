@@ -1,0 +1,31 @@
+# Example: Deploy tarang media framework to edge fleet
+
+[playbook]
+name = "Deploy tarang to edge fleet"
+description = "Install and enable tarang media framework on all aarch64 edge nodes"
+
+[[target]]
+role = "edge"
+arch = "aarch64"
+
+[[task]]
+module = "ark"
+action = "install"
+package = "tarang"
+version = "2026.3.18"
+
+[[task]]
+module = "argonaut"
+action = "enable"
+service = "tarang"
+
+[[task]]
+module = "verify"
+action = "port_listening"
+port = 8070
+timeout_secs = 10
+
+[[task]]
+module = "daimon"
+action = "report"
+status = "tarang deployed"

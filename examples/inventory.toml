@@ -1,0 +1,35 @@
+# Example inventory — static node definitions
+
+[[node]]
+id = "rpi-kitchen"
+host = "192.168.1.50"
+role = "edge"
+arch = "aarch64"
+tags = ["iot", "home"]
+transport = "daimon"
+
+[[node]]
+id = "rpi-garage"
+host = "192.168.1.51"
+role = "edge"
+arch = "aarch64"
+tags = ["iot", "home"]
+transport = "daimon"
+
+[[node]]
+id = "nuc-office"
+host = "192.168.1.10"
+role = "desktop"
+arch = "x86_64"
+tags = ["workstation"]
+transport = "ssh"
+ssh_user = "user"
+
+[[node]]
+id = "server-rack"
+host = "192.168.1.100"
+role = "server"
+arch = "x86_64"
+tags = ["infra", "build"]
+transport = "ssh"
+ssh_user = "agnos"
