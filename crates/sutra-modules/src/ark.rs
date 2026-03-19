@@ -153,7 +153,7 @@ impl SutraModule for ArkModule {
             "install" => {
                 let installed = self.query_installed(exec, package).await?;
                 match installed {
-                    Some(v) if version == "latest" => Ok(true),
+                    Some(_) if version == "latest" => Ok(true),
                     Some(v) if v == version => Ok(true),
                     _ => Ok(false),
                 }
