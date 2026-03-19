@@ -195,7 +195,7 @@ fn audit_log_dir() -> PathBuf {
 }
 
 /// Execute tasks on a single node. Returns (node_id, record, output_lines, success).
-async fn execute_on_node(
+struct NodeRunParams {
     node: NodeInfo,
     tasks: Vec<sutra_core::Task>,
     task_order: Vec<usize>,
@@ -206,7 +206,23 @@ async fn execute_on_node(
     playbook_on_error: OnError,
     playbook_path: String,
     out: Arc<Output>,
+}
+
+async fn execute_on_node(
+    p: NodeRunParams,
 ) -> anyhow::Result<(String, RunRecord, Vec<String>, bool)> {
+    let NodeRunParams {
+        node,
+        tasks,
+        task_order,
+        registry,
+        confirm,
+        var_ctx,
+        gather_node_facts,
+        playbook_on_error,
+        playbook_path,
+        out,
+    } = p;
     let exec = Executor::for_node(&node);
     let mut record = RunRecord::new(&playbook_path, &node.id);
     let mut lines = Vec::new();
@@ -422,7 +438,11 @@ async fn main() -> anyhow::Result<()> {
 
                     handles.push(tokio::spawn(async move {
                         let _permit = sem.acquire().await.unwrap();
-                        execute_on_node(node, tasks, t_order, reg, confirm, ctx, facts, pb_err, pb_path, o).await
+                        execute_on_node(NodeRunParams {
+                            node, tasks, task_order: t_order, registry: reg,
+                            confirm, var_ctx: ctx, gather_node_facts: facts,
+                            playbook_on_error: pb_err, playbook_path: pb_path, out: o,
+                        }).await
                     }));
                 }
 
@@ -461,18 +481,18 @@ async fn main() -> anyhow::Result<()> {
                 // Sequential execution.
                 for node in nodes {
                     let tasks = pb.task.clone();
-                    let (node_id, record, lines, success) = execute_on_node(
+                    let (node_id, record, lines, success) = execute_on_node(NodeRunParams {
                         node,
                         tasks,
-                        task_order.clone(),
-                        Arc::clone(&registry),
+                        task_order: task_order.clone(),
+                        registry: Arc::clone(&registry),
                         confirm,
-                        var_ctx.clone(),
-                        facts,
-                        pb_on_error.clone(),
-                        playbook_path.clone(),
-                        Arc::clone(&out),
-                    )
+                        var_ctx: var_ctx.clone(),
+                        gather_node_facts: facts,
+                        playbook_on_error: pb_on_error.clone(),
+                        playbook_path: playbook_path.clone(),
+                        out: Arc::clone(&out),
+                    })
                     .await?;
 
                     if !out.is_json() {
@@ -757,15 +777,14 @@ async fn main() -> anyhow::Result<()> {
                         errors += 1;
                     }
 
-                    if let Some(module) = registry.get(&task.module) {
-                        if !module.actions().contains(&task.action.as_str()) {
+                    if let Some(module) = registry.get(&task.module)
+                        && !module.actions().contains(&task.action.as_str()) {
                             eprintln!(
                                 "  ERROR: Unknown action '{}' for module '{}'",
                                 task.action, task.module
                             );
                             errors += 1;
                         }
-                    }
                 }
 
                 if errors == 0 {

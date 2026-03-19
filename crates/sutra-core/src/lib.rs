@@ -438,8 +438,8 @@ pub async fn gather_facts(exec: &Executor) -> HashMap<String, String> {
     }
 
     // Distro detection from /etc/os-release.
-    if let Ok(r) = exec.exec("cat /etc/os-release 2>/dev/null").await {
-        if r.success() {
+    if let Ok(r) = exec.exec("cat /etc/os-release 2>/dev/null").await
+        && r.success() {
             for line in r.stdout.lines() {
                 if let Some(id) = line.strip_prefix("ID=") {
                     facts.insert("distro".into(), id.trim_matches('"').into());
@@ -452,7 +452,6 @@ pub async fn gather_facts(exec: &Executor) -> HashMap<String, String> {
                 }
             }
         }
-    }
 
     // Package manager detection (for v2 cross-distro support).
     for (cmd, name) in [
@@ -462,12 +461,11 @@ pub async fn gather_facts(exec: &Executor) -> HashMap<String, String> {
         ("pacman --version", "pacman"),
         ("apk --version", "apk"),
     ] {
-        if let Ok(r) = exec.exec(&format!("{} 2>/dev/null", cmd)).await {
-            if r.success() {
+        if let Ok(r) = exec.exec(&format!("{} 2>/dev/null", cmd)).await
+            && r.success() {
                 facts.insert("pkg_manager".into(), name.into());
                 break;
             }
-        }
     }
 
     // Init system detection.
@@ -476,12 +474,11 @@ pub async fn gather_facts(exec: &Executor) -> HashMap<String, String> {
         ("systemctl --version", "systemd"),
         ("rc-status --version", "openrc"),
     ] {
-        if let Ok(r) = exec.exec(&format!("{} 2>/dev/null", cmd)).await {
-            if r.success() {
+        if let Ok(r) = exec.exec(&format!("{} 2>/dev/null", cmd)).await
+            && r.success() {
                 facts.insert("init_system".into(), name.into());
                 break;
             }
-        }
     }
 
     facts
@@ -764,8 +761,8 @@ pub fn order_tasks(tasks: &[Task]) -> anyhow::Result<Vec<usize>> {
 
     let mut queue: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
     // Enqueue tasks with no dependencies, in original order.
-    for i in 0..n {
-        if in_deg[i] == 0 {
+    for (i, deg) in in_deg.iter().enumerate() {
+        if *deg == 0 {
             queue.push_back(i);
         }
     }

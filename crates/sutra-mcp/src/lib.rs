@@ -367,7 +367,7 @@ async fn handle_translate(params: &Value) -> McpResult {
                 "note": "Use sutra nl or hoosh to generate TOML from this prompt"
             }))
         }
-        "nl" | _ => {
+        _ => {
             let client =
                 sutra_ai::daimon::HooshClient::new(sutra_ai::daimon::HooshConfig::default());
             match client.nl_to_toml(input).await {

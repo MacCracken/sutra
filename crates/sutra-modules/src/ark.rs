@@ -28,7 +28,6 @@ impl ArkModule {
             // Output format: "package version"
             let version = result
                 .stdout
-                .trim()
                 .split_whitespace()
                 .nth(1)
                 .unwrap_or("unknown")

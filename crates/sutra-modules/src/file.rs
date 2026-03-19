@@ -69,7 +69,7 @@ impl SutraModule for FileModule {
                         (
                             true,
                             format!("update {}", path),
-                            Some(format!("--- current\n+++ desired\n content differs")),
+                            Some("--- current\n+++ desired\n content differs".to_string()),
                         )
                     }
                 } else {
