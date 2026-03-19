@@ -1,56 +1,60 @@
 # Sutra Roadmap
 
-## Current State (2026-03-18)
-
-~1,700 lines of Rust across 5 crates. Solid scaffold: types, parsers, YAML/TOML
-conversion, local transport, CLI with 9 subcommands, 36 passing tests. All module
-logic is stubbed — plan/apply/check return hardcoded values. No real execution yet.
+> **Status**: v1 complete | **Last Updated**: 2026-03-19
 
 ---
 
-## MVP — "It actually does things on a local box"
+## Completed
 
-Goal: `sutra apply playbook.toml --confirm` executes real changes on localhost.
+### MVP — "It actually does things on a local box"
 
-| # | Work Item | Crate |
-|---|-----------|-------|
-| 1 | Wire transport into modules — modules receive `&dyn Transport` so plan/apply/check can exec commands and read files | `sutra-core`, `sutra-modules` |
-| 2 | Implement ark module — real `ark install/remove/upgrade/pin/list` via shell commands through transport | `sutra-modules` |
-| 3 | Implement argonaut module — real `argonaut enable/disable/start/stop/restart/status` | `sutra-modules` |
-| 4 | Implement file module — copy, absent, permissions, line_in_file (defer template to v1) | `sutra-modules` |
-| 5 | Implement verify module — port_listening, file_exists, service_running, http_ok as real checks | `sutra-modules` |
-| 6 | Add shell module — escape hatch for arbitrary commands | `sutra-modules` |
-| 7 | Add user module — user/group create/delete/modify | `sutra-modules` |
-| 8 | Task execution engine — iterate tasks, call plan then apply, respect `--confirm` vs dry-run, bail on first failure | `src/main.rs`, `sutra-core` |
-| 9 | Target filtering — match playbook targets against inventory (role, arch, tag, node_id, all) | `sutra-core` |
-| 10 | Idempotency in apply — call check() before apply(), skip if already in desired state | `sutra-core` |
-| 11 | Audit trail persistence — write RunRecord to disk (JSON lines) after each run | `sutra-core` |
-| 12 | Integration tests — real playbook runs against a temp directory | workspace |
+All items complete. `sutra apply playbook.toml --confirm` executes real changes on localhost with idempotency, audit trail, and 6 core modules.
 
-MVP ships 6 core modules: ark, argonaut, file, verify, shell, user. All work locally.
+- Executor with enum dispatch (avoids async-dyn issues)
+- 6 core modules: ark, argonaut, file, verify, shell, user — all with real implementations
+- Task execution engine with plan→check→apply loop
+- Target filtering (role, arch, tag, node_id, all)
+- Idempotency — check() before apply(), skip if already met
+- Audit trail — JSON-lines to `~/.local/share/sutra/audit/`
+- Integration tests — 10 tests covering file lifecycle, shell idempotency, targeting, audit
+
+### v1 — "Production fleet orchestration"
+
+All items complete except daimon HTTP transport (blocked on AGNOS API — tracked as T1/T2 in AGNOS roadmap).
+
+- SSH transport — `ExecutorKind::Ssh` via russh 0.48, lazy connect, ed25519/rsa key auth
+- Parallel node execution — `-j N` / `--parallel N` with bounded semaphore, `--continue-on-error`
+- File templating — Tera engine for `file.template` action
+- Error recovery — `on_error: fail/continue/ignore` per-task and per-playbook
+- Task dependencies — `name` + `depends_on` fields, topological sort, cycle detection
+- MCP tool handlers — all 6 tools implemented with real execution
+- Daimon fleet integration — client wired into CLI and MCP
+- Hoosh NL integration — client wired into CLI and MCP
+- Structured JSON output — `--output json` emits JSON-lines events
+- Variables & facts — `[vars]` in playbooks, `{{ var }}` expansion, `--var` CLI override, `--facts` gathers os/arch/hostname/distro/pkg_manager/init_system
+- Validate hardening — checks unknown actions, not just unknown modules
+- 70 tests across 5 crates + integration tests
+
+### sutra-community — scaffolded
+
+Separate repo (`MacCracken/sutra-community`) with 5 module crates:
+- `sutra-nftables` — firewall rules via nftables (implemented)
+- `sutra-sysctl` — kernel parameter tuning with persistence (implemented)
+- `sutra-aegis` — AGNOS security policy enforcement (stub)
+- `sutra-daimon` — AGNOS agent lifecycle and fleet reporting (stub)
+- `sutra-edge` — edge node fleet operations (stub)
 
 ---
 
-## v1 — "Production fleet orchestration"
+## Blocked — Waiting on AGNOS
 
-Goal: `sutra apply playbook.toml -i fleet.toml --confirm` orchestrates across remote nodes.
-
-| # | Work Item | Crate |
-|---|-----------|-------|
-| 1 | SSH transport — implement Transport trait over russh, key auth, host verification | `sutra-transport` |
-| 2 | Daimon HTTP transport — implement Transport trait against daimon agent API (port 8090) | `sutra-transport` |
-| 3 | Transport dispatch — `transport_for(node)` returns correct transport based on node.transport field | `sutra-transport` |
-| 4 | Parallel node execution — run tasks across multiple nodes concurrently (tokio tasks, configurable concurrency) | `sutra-core` |
-| 5 | File templating — Tera for file.template action with variable interpolation | `sutra-modules` |
-| 6 | Error recovery — configurable on_error (fail/continue/rollback), retry with backoff | `sutra-core` |
-| 7 | Task dependencies / ordering — task graph with explicit `depends_on` or implicit ordering | `sutra-core` |
-| 8 | MCP tool handlers — implement the 6 MCP tools so AI agents can drive sutra | `sutra-mcp` |
-| 9 | Daimon fleet integration — `sutra inventory --from-daimon` populates inventory from fleet API | `sutra-ai` |
-| 10 | Hoosh NL integration — `sutra nl` sends to hoosh, receives TOML, user reviews | `sutra-ai` |
-| 11 | Structured output — `--output json` for all commands (machine-readable for MCP/scripting) | CLI |
-| 12 | Variables & facts — playbook-level vars, node facts gathered at start of run | `sutra-core` |
-| 13 | Validate command hardening — check param types, required fields, module-specific schema validation | `sutra-core` |
-| 14 | Comprehensive test suite — SSH transport tests (mock server), multi-node integration tests | workspace |
+| # | Item | Blocker | AGNOS Tracker |
+|---|------|---------|---------------|
+| 1 | Daimon HTTP transport (`ExecutorKind::Daimon`) | Needs `POST /v1/agents/{id}/exec` API in daimon | T1 |
+| 2 | Daimon file transfer | Needs `PUT/GET /v1/agents/{id}/files/{path}` API | T2 |
+| 3 | Fleet audit ingestion | Needs `POST /v1/audit/runs` in daimon | T3 |
+| 4 | Hoosh playbook generation quality | Needs playbook-aware few-shot tuning in hoosh | T4 |
+| 5 | sutra-community marketplace recipe | Needs `recipes/marketplace/sutra-community.toml` in AGNOS | T5 |
 
 ---
 
@@ -63,7 +67,7 @@ systems, and platform details are abstracted behind provider interfaces.
 |---|-----------|-------|
 | 1 | Package provider abstraction — trait behind ark module: `ArkProvider`, `AptProvider`, `DnfProvider`, `PacmanProvider`, `ApkProvider` | Auto-detect or explicit `provider` field in task |
 | 2 | Service provider abstraction — trait behind argonaut module: `ArgonautProvider`, `SystemdProvider`, `OpenRCProvider`, `RunitProvider` | Auto-detect from init system |
-| 3 | OS fact gathering — detect distro, package manager, init system, arch at run start | Populate `node.facts` map |
+| 3 | OS fact gathering already detects distro, pkg_manager, init_system | Wire into provider auto-selection |
 | 4 | Provider auto-selection — match detected OS facts to correct provider impl | Fallback to explicit config |
 | 5 | Cross-distro file paths — normalize config paths, service unit locations per distro | Provider-level knowledge |
 | 6 | Generic package/service names — optional mapping table (e.g., `httpd` vs `apache2`) | User-configurable |
@@ -79,16 +83,15 @@ On other distros, sutra detects the environment and selects the appropriate prov
 
 | # | Work Item | Notes |
 |---|-----------|-------|
-| 1 | sutra-community repo — separate repo for domain-specific modules | nftables, sysctl, aegis, daimon, edge, Docker/OCI, cloud providers, database |
-| 2 | Community module loader — dynamic or compile-time registration of external module crates | Plugin trait + registry |
-| 3 | Handlers / hooks — pre_task, post_task, on_failure callbacks in playbooks | |
-| 4 | Roles / includes — reusable task groups, playbook composition | |
-| 5 | Secrets management — encrypted vars, vault integration | |
-| 6 | Diff output — show file diffs, config diffs in plan output | |
-| 7 | Web UI / dashboard — run history, fleet state, playbook browser | Could be separate AGNOS app |
-| 8 | Marketplace integration — publish/consume playbooks via recipes/marketplace | |
-| 9 | Conditional tasks — `when:` clauses based on facts, vars, previous results | |
-| 10 | Notification / webhook — post run results to Slack, HTTP endpoint, etc. | |
+| 1 | Community module loader — dynamic or compile-time registration of external module crates | Plugin trait + registry |
+| 2 | Handlers / hooks — pre_task, post_task, on_failure callbacks in playbooks | |
+| 3 | Roles / includes — reusable task groups, playbook composition | |
+| 4 | Secrets management — encrypted vars, vault integration | |
+| 5 | Diff output — show file diffs, config diffs in plan output | |
+| 6 | Web UI / dashboard — run history, fleet state, playbook browser | Could be separate AGNOS app |
+| 7 | Marketplace integration — publish/consume playbooks via recipes/marketplace | |
+| 8 | Conditional tasks — `when:` clauses based on facts, vars, previous results | |
+| 9 | Notification / webhook — post run results to Slack, HTTP endpoint, etc. | |
 
 ---
 
