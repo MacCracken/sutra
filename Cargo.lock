@@ -1421,6 +1421,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nein"
+version = "0.24.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35c51827c66526c747dee223cebd40cfade54cfd7203b1b60955c81ad201bc3e"
+dependencies = [
+ "serde",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml",
+ "tracing",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2701,6 +2714,7 @@ name = "sutra-modules"
 version = "2026.3.18"
 dependencies = [
  "anyhow",
+ "nein",
  "serde",
  "serde_json",
  "shlex",

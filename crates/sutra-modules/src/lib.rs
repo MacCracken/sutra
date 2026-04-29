@@ -5,6 +5,8 @@ use sutra_core::{Executor, NodeInfo, SutraModule, Task, TaskPlan, TaskResult};
 pub mod argonaut;
 pub mod ark;
 pub mod file;
+#[cfg(feature = "nein")]
+pub mod nein;
 pub mod shell;
 pub mod user;
 pub mod verify;
@@ -14,6 +16,8 @@ pub enum Module {
     Ark(ark::ArkModule),
     Argonaut(argonaut::ArgonautModule),
     File(file::FileModule),
+    #[cfg(feature = "nein")]
+    Nein(nein::NeinModule),
     Shell(shell::ShellModule),
     User(user::UserModule),
     Verify(verify::VerifyModule),
@@ -25,6 +29,8 @@ impl SutraModule for Module {
             Module::Ark(m) => m.name(),
             Module::Argonaut(m) => m.name(),
             Module::File(m) => m.name(),
+            #[cfg(feature = "nein")]
+            Module::Nein(m) => m.name(),
             Module::Shell(m) => m.name(),
             Module::User(m) => m.name(),
             Module::Verify(m) => m.name(),
@@ -36,6 +42,8 @@ impl SutraModule for Module {
             Module::Ark(m) => m.actions(),
             Module::Argonaut(m) => m.actions(),
             Module::File(m) => m.actions(),
+            #[cfg(feature = "nein")]
+            Module::Nein(m) => m.actions(),
             Module::Shell(m) => m.actions(),
             Module::User(m) => m.actions(),
             Module::Verify(m) => m.actions(),
@@ -52,6 +60,8 @@ impl SutraModule for Module {
             Module::Ark(m) => m.plan(task, node, exec).await,
             Module::Argonaut(m) => m.plan(task, node, exec).await,
             Module::File(m) => m.plan(task, node, exec).await,
+            #[cfg(feature = "nein")]
+            Module::Nein(m) => m.plan(task, node, exec).await,
             Module::Shell(m) => m.plan(task, node, exec).await,
             Module::User(m) => m.plan(task, node, exec).await,
             Module::Verify(m) => m.plan(task, node, exec).await,
@@ -68,6 +78,8 @@ impl SutraModule for Module {
             Module::Ark(m) => m.apply(task, node, exec).await,
             Module::Argonaut(m) => m.apply(task, node, exec).await,
             Module::File(m) => m.apply(task, node, exec).await,
+            #[cfg(feature = "nein")]
+            Module::Nein(m) => m.apply(task, node, exec).await,
             Module::Shell(m) => m.apply(task, node, exec).await,
             Module::User(m) => m.apply(task, node, exec).await,
             Module::Verify(m) => m.apply(task, node, exec).await,
@@ -79,6 +91,8 @@ impl SutraModule for Module {
             Module::Ark(m) => m.check(task, node, exec).await,
             Module::Argonaut(m) => m.check(task, node, exec).await,
             Module::File(m) => m.check(task, node, exec).await,
+            #[cfg(feature = "nein")]
+            Module::Nein(m) => m.check(task, node, exec).await,
             Module::Shell(m) => m.check(task, node, exec).await,
             Module::User(m) => m.check(task, node, exec).await,
             Module::Verify(m) => m.check(task, node, exec).await,
@@ -98,6 +112,8 @@ impl ModuleRegistry {
                 Module::Ark(ark::ArkModule),
                 Module::Argonaut(argonaut::ArgonautModule),
                 Module::File(file::FileModule),
+                #[cfg(feature = "nein")]
+                Module::Nein(nein::NeinModule),
                 Module::Shell(shell::ShellModule),
                 Module::User(user::UserModule),
                 Module::Verify(verify::VerifyModule),
@@ -143,6 +159,9 @@ mod tests {
     fn test_registry_list() {
         let reg = ModuleRegistry::new();
         let modules = reg.list();
+        #[cfg(feature = "nein")]
+        assert_eq!(modules.len(), 7);
+        #[cfg(not(feature = "nein"))]
         assert_eq!(modules.len(), 6);
         let names: Vec<&str> = modules.iter().map(|(n, _)| *n).collect();
         assert!(names.contains(&"ark"));
